@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sperixlabs.org/resilient-write/spec/errors.schema.json",
+  "title": "resilient-write L3 error envelope",
+  "description": "Structured error payload returned by every failing tool in the resilient-write MCP server. See docs/ARCHITECTURE.md#layer-3 and docs/ERRORS.md for the handling guide.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ok",
+    "schema_version",
+    "error",
+    "reason_hint",
+    "detected_patterns",
+    "suggested_action",
+    "retry_budget",
+    "context"
+  ],
+  "properties": {
+    "ok": {
+      "type": "boolean",
+      "const": false,
+      "description": "Always false for an error envelope. Success responses carry ok=true and tool-specific fields instead."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1",
+      "description": "Envelope schema version. Bumped on breaking changes to the shape."
+    },
+    "error": {
+      "type": "string",
+      "enum": [
+        "blocked",
+        "stale_precondition",
+        "write_corruption",
+        "quota_exceeded",
+        "policy_violation"
+      ],
+      "description": "Class of failure. Agents should branch on this for coarse-grained handling."
+    },
+    "reason_hint": {
+      "type": "string",
+      "enum": [
+        "content_filter",
+        "size_limit",
+        "encoding",
+        "permission",
+        "network",
+        "unknown"
+      ],
+      "description": "Best-effort hint about *why* the sink rejected the payload. Agents use this to decide between redact / split / retry / abort strategies."
+    },
+    "detected_patterns": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Pattern family names (e.g. 'api_key', 'github_pat') when the failure is a content-filter block. Empty for non-filter failures. Matches the L0 family taxonomy in docs/POLICY.md."
+    },
+    "suggested_action": {
+      "type": "string",
+      "enum": [
+        "redact",
+        "split",
+        "escape",
+        "ask_user",
+        "retry_later",
+        "abort"
+      ],
+      "description": "Recommended recovery action. The agent MAY choose differently if context warrants, but SHOULD default to this."
+    },
+    "retry_budget": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many retries remain before the server refuses additional attempts. Counts down per-call."
+    },
+    "context": {
+      "type": "object",
+      "description": "Free-form per-error context. Fields vary by error+reason; conventional keys include path, sha256, expected_sha256, actual_sha256, score, verdict, session, reason.",
+      "additionalProperties": true
+    }
+  }
+}

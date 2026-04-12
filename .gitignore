@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build artifacts
+build/
+dist/
+*.egg
+
+# uv / venv
+.venv/
+uv.lock
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# resilient-write consumer state (if this repo is ever used on itself)
+.resilient_write/

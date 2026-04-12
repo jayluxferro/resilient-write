@@ -1,0 +1,52 @@
+[project]
+name = "resilient-write"
+version = "0.1.0"
+description = "MCP server providing a durable, fault-tolerant write surface for coding agents"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+    { name = "Jay Lux Ferro", email = "jay@sperixlabs.org" },
+]
+keywords = ["mcp", "claude", "agents", "resilience", "atomic-write"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "pyyaml>=6.0",
+    "jsonschema>=4.0",
+]
+
+[project.scripts]
+resilient-write = "resilient_write.server:main"
+
+[project.urls]
+Homepage = "https://github.com/jayluxferro/resilient-write"
+Issues = "https://github.com/jayluxferro/resilient-write/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/resilient_write"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"spec/errors.schema.json" = "resilient_write/_spec/errors.schema.json"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
