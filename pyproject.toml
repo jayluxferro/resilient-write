@@ -1,16 +1,16 @@
 [project]
 name = "resilient-write"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP server providing a durable, fault-tolerant write surface for coding agents"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [
-    { name = "Jay Lux Ferro", email = "jay@sperixlabs.org" },
+    { name = "Justice Owusu Agyemang", email = "jay@sperixlabs.org" },
 ]
 keywords = ["mcp", "claude", "agents", "resilience", "atomic-write"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3 :: Only",
@@ -29,6 +29,7 @@ resilient-write = "resilient_write.server:main"
 
 [project.urls]
 Homepage = "https://github.com/jayluxferro/resilient-write"
+Documentation = "https://pypi.org/project/resilient-write/"
 Issues = "https://github.com/jayluxferro/resilient-write/issues"
 
 [dependency-groups]

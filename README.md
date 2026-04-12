@@ -1,10 +1,13 @@
 # resilient-write
 
+[![PyPI version](https://img.shields.io/pypi/v/resilient-write)](https://pypi.org/project/resilient-write/)
+[![Python 3.12+](https://img.shields.io/pypi/pyversions/resilient-write)](https://pypi.org/project/resilient-write/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Tests](https://img.shields.io/badge/tests-186%20passed-brightgreen)]()
+
 An MCP server that gives coding agents a **durable, fault-tolerant write surface**
 so they can keep making forward progress when a tool call is blocked by a content
 filter, a size cap, or an opaque transport error.
-
-This repo is a **design + spec** at first. Code lands after the spec is frozen.
 
 ## Why this exists
 
@@ -43,43 +46,37 @@ This project addresses those five failure modes as five orthogonal layers.
 
 Layers can be adopted independently. The minimum useful install is **L1 + L5**.
 
-## Repo layout (planned)
+## Install
 
-```
-resilient-write/
-├── README.md                    # this file
-├── docs/
-│   ├── ARCHITECTURE.md          # deep dive on each layer
-│   ├── API.md                   # MCP tool schemas (input/output)
-│   ├── POLICY.md                # default L0 classifier patterns + thresholds
-│   ├── HANDOFF_SCHEMA.md        # envelope format for L5
-│   └── SCENARIOS.md             # walk-through of real failure modes
-├── spec/
-│   ├── tools.schema.json        # JSON Schema for the sixteen tools
-│   └── handoff.schema.json      # JSON Schema for HANDOFF.md front-matter
-├── src/                         # Python implementation (post-spec)
-│   └── resilient_write/
-│       ├── __init__.py
-│       ├── server.py            # MCP entrypoint
-│       ├── safe_write.py        # L1
-│       ├── risk_score.py        # L0
-│       ├── chunk_compose.py     # L2
-│       ├── scratchpad.py        # L4
-│       ├── handoff.py           # L5
-│       └── errors.py            # L3 typed error envelope
-└── tests/
-    └── scenarios/               # replay fixtures for SCENARIOS.md
+```bash
+pip install resilient-write
 ```
 
-## Install (planned)
+Or run directly:
 
-```
-uvx resilient-write              # run the MCP server
-# or
-pipx install resilient-write
+```bash
+uvx resilient-write
 ```
 
-MCP config for Claude Code / Cursor / Codex / Copilot clients lives in `docs/INSTALL.md`.
+### MCP client configuration
+
+Add to your Claude Code, Cursor, or Codex MCP config:
+
+```json
+{
+  "mcpServers": {
+    "resilient-write": {
+      "command": "uvx",
+      "args": ["resilient-write"],
+      "env": {
+        "RW_WORKSPACE": "/path/to/your/project"
+      }
+    }
+  }
+}
+```
+
+See `docs/INSTALL.md` for full setup instructions for all clients.
 
 ## Status
 
@@ -87,9 +84,9 @@ MCP config for Claude Code / Cursor / Codex / Copilot clients lives in `docs/INS
 - [x] Per-layer specs
 - [x] JSON schemas (`spec/errors.schema.json`)
 - [x] Reference Python implementation (all six layers, 16 tools)
-- [x] Test fixtures (186 tests, all green)
+- [x] Test suite (186 tests, all green)
 - [x] Published MCP config snippets (`docs/INSTALL.md`)
-- [ ] Published to PyPI
+- [x] [Published to PyPI](https://pypi.org/project/resilient-write/)
 
 ## Origin
 
