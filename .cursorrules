@@ -1,0 +1,33 @@
+This workspace has the resilient-write MCP server active.
+You should always prefer rw.* tools over raw file write operations.
+
+Tool preference:
+  Create or overwrite a file     -> rw.safe_write (mode=create or overwrite)
+  Append to a file               -> rw.safe_write (mode=append)
+  Write a large file (>5 KB)     -> rw.chunk_append then rw.chunk_compose
+  Check content for secrets/risk -> rw.risk_score
+  Validate syntax before writing -> rw.validate
+  Preview chunked content        -> rw.chunk_preview
+  Store sensitive material       -> rw.scratch_put
+  Save session state for handoff -> rw.handoff_write
+  Inspect write history          -> rw.journal_tail or rw.analytics
+
+Chunked writing protocol:
+  For any file larger than ~5 KB or with multiple logical sections, you should:
+  1. Use rw.chunk_append for each section (auto-increments index).
+  2. Call rw.chunk_preview to verify the concatenated result.
+  3. Optionally run rw.validate on the preview content.
+  4. Call rw.chunk_compose with cleanup=true to write the final file.
+
+Why you should use rw.* tools instead of raw writes:
+  - Raw writes can fail silently when content triggers safety filters,
+    exceeds size limits, or contains token-shaped strings.
+  - rw.* tools provide pre-flight risk scoring, atomic writes with hash
+    verification, structured errors, resume-safe chunks, and an audit journal.
+
+Rules:
+  - You should run rw.risk_score before writing and check the verdict.
+  - If verdict is "high", you should redact detected patterns before writing.
+  - If a write fails, you should read the error envelope's suggested_action.
+  - You should never retry identical rejected content -- change it first.
+  - You should call rw.handoff_write before session end if work is incomplete.

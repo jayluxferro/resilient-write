@@ -23,3 +23,15 @@ def test_workspace_root_defaults_to_cwd(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("RW_WORKSPACE", raising=False)
     monkeypatch.chdir(tmp_path)
     assert workspace_root() == tmp_path.resolve()
+
+
+def test_workspace_root_rejects_system_dirs(monkeypatch) -> None:
+    import pytest
+
+    monkeypatch.setenv("RW_WORKSPACE", "/")
+    with pytest.raises(SystemExit):
+        workspace_root()
+
+    monkeypatch.setenv("RW_WORKSPACE", "/usr")
+    with pytest.raises(SystemExit):
+        workspace_root()

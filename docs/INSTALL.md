@@ -22,9 +22,36 @@ configuration is via environment variables (see below) and the
 
 ## MCP client config snippets
 
-Every snippet below assumes the server is on `$PATH` (via `uvx`, `pipx`,
-or a source checkout's `uv run` wrapper). Replace the command string if
-your layout differs.
+The snippets below come in two flavours:
+
+1. **Published** — once `resilient-write` is on PyPI, point the client at
+   `uvx resilient-write`. That's what every snippet in this section
+   shows first.
+2. **Local checkout** — before PyPI publish (or when you want to iterate
+   on the source), point the client at `uv run --directory <path>` so
+   it uses the venv already synced in your working tree.
+
+The local-checkout form for Claude Code looks like this:
+
+```json
+{
+  "mcpServers": {
+    "resilient-write": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory", "/path/to/resilient-write",
+        "resilient-write"
+      ],
+      "env": { "RW_WORKSPACE": "${PWD}" }
+    }
+  }
+}
+```
+
+Set `--directory` to your local checkout of the repo. The same
+`command` / `args` substitution applies to every client-specific
+snippet below.
 
 ### Claude Code (`~/.config/claude/claude_desktop_config.json` or project `.mcp.json`)
 
@@ -35,7 +62,7 @@ your layout differs.
       "command": "uvx",
       "args": ["resilient-write"],
       "env": {
-        "RW_WORKSPACE": "${CLAUDE_PROJECT_DIR}"
+        "RW_WORKSPACE": "${PWD}"
       }
     }
   }
@@ -51,7 +78,7 @@ your layout differs.
       "command": "uvx",
       "args": ["resilient-write"],
       "env": {
-        "RW_WORKSPACE": "${workspaceFolder}"
+        "RW_WORKSPACE": "${PWD}"
       }
     }
   }
@@ -64,7 +91,7 @@ your layout differs.
 [mcp_servers.resilient-write]
 command = "uvx"
 args = ["resilient-write"]
-env = { RW_WORKSPACE = "${workspaceFolder}" }
+env = { RW_WORKSPACE = "${PWD}" }
 ```
 
 ### Copilot CLI (`~/.config/github-copilot/mcp.json`)
@@ -76,7 +103,7 @@ env = { RW_WORKSPACE = "${workspaceFolder}" }
       "command": "uvx",
       "args": ["resilient-write"],
       "env": {
-        "RW_WORKSPACE": "${cwd}"
+        "RW_WORKSPACE": "${PWD}"
       }
     }
   }
@@ -92,7 +119,7 @@ env = { RW_WORKSPACE = "${workspaceFolder}" }
       "type": "local",
       "command": ["uvx", "resilient-write"],
       "environment": {
-        "RW_WORKSPACE": "${workspace}"
+        "RW_WORKSPACE": "${PWD}"
       }
     }
   }
@@ -144,9 +171,10 @@ inline per-call or in `.resilient_write/policy.yaml`.
 |---|---|
 | L0 | `rw.risk_score` |
 | L1 | `rw.safe_write`, `rw.journal_tail` |
-| L2 | `rw.chunk_write`, `rw.chunk_compose`, `rw.chunk_reset`, `rw.chunk_status` |
+| L2 | `rw.chunk_write`, `rw.chunk_compose`, `rw.chunk_append`, `rw.chunk_reset`, `rw.chunk_status`, `rw.chunk_preview` |
 | L4 | `rw.scratch_put`, `rw.scratch_ref`, `rw.scratch_get` |
 | L5 | `rw.handoff_write`, `rw.handoff_read` |
+| Utility | `rw.validate`, `rw.analytics` |
 
 Input/output schemas: [`docs/API.md`](API.md). Failure envelopes:
 [`docs/ERRORS.md`](ERRORS.md). Architecture:
@@ -157,7 +185,7 @@ Input/output schemas: [`docs/API.md`](API.md). Failure envelopes:
 ```bash
 # from a source checkout
 uv run pytest
-# → 134 passed
+# → 186 passed
 
 # one-shot smoke test: the server should start and exit cleanly when
 # stdin is closed.

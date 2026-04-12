@@ -104,6 +104,27 @@ def test_dispatch_chunk_invalid_session_returns_envelope(
     assert out["error"] == "policy_violation"
 
 
+def test_dispatch_chunk_append(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("RW_WORKSPACE", str(tmp_path))
+    out1 = server._envelope_or_error(
+        "rw.chunk_append", {"session": "draft", "content": "section 1\n"}
+    )
+    assert out1["ok"] is True
+    assert out1["index"] == 1
+
+    out2 = server._envelope_or_error(
+        "rw.chunk_append", {"session": "draft", "content": "section 2\n"}
+    )
+    assert out2["index"] == 2
+
+    compose = server._envelope_or_error(
+        "rw.chunk_compose",
+        {"session": "draft", "output_path": "draft.txt"},
+    )
+    assert compose["ok"] is True
+    assert (tmp_path / "draft.txt").read_text() == "section 1\nsection 2\n"
+
+
 def test_dispatch_risk_score(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("RW_WORKSPACE", str(tmp_path))
     out = server._envelope_or_error(

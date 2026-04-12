@@ -217,6 +217,62 @@ def test_chunk_status_missing_session(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# chunk_append (auto-incrementing)
+# ---------------------------------------------------------------------------
+
+
+def test_chunk_append_starts_at_one(tmp_path: Path) -> None:
+    out = chunks.chunk_append(tmp_path, session="s", content="first\n")
+    assert out["ok"] is True
+    assert out["index"] == 1
+    assert out["chunk_path"] == ".resilient_write/chunks/s/part-001.txt"
+    assert (tmp_path / ".resilient_write/chunks/s/part-001.txt").read_text() == "first\n"
+
+
+def test_chunk_append_auto_increments(tmp_path: Path) -> None:
+    chunks.chunk_append(tmp_path, session="s", content="A")
+    chunks.chunk_append(tmp_path, session="s", content="B")
+    out = chunks.chunk_append(tmp_path, session="s", content="C")
+    assert out["index"] == 3
+    assert out["sha256"] == _sha("C")
+
+
+def test_chunk_append_composes_correctly(tmp_path: Path) -> None:
+    chunks.chunk_append(tmp_path, session="doc", content="\\section{Intro}\n")
+    chunks.chunk_append(tmp_path, session="doc", content="\\section{Body}\n")
+    chunks.chunk_append(tmp_path, session="doc", content="\\section{End}\n")
+    result = chunks.chunk_compose(
+        tmp_path, session="doc", output_path="doc.tex"
+    )
+    assert result["chunk_count"] == 3
+    assert (tmp_path / "doc.tex").read_text() == (
+        "\\section{Intro}\n\\section{Body}\n\\section{End}\n"
+    )
+
+
+def test_chunk_append_with_total_expected(tmp_path: Path) -> None:
+    chunks.chunk_append(tmp_path, session="s", content="a", total_expected=2)
+    chunks.chunk_append(tmp_path, session="s", content="b", total_expected=2)
+    result = chunks.chunk_compose(tmp_path, session="s", output_path="out.txt")
+    assert result["chunk_count"] == 2
+
+
+def test_chunk_append_mixed_with_chunk_write(tmp_path: Path) -> None:
+    """chunk_append picks up after manually-indexed chunk_write calls."""
+    chunks.chunk_write(tmp_path, session="s", index=1, content="manual")
+    out = chunks.chunk_append(tmp_path, session="s", content="auto")
+    assert out["index"] == 2
+
+
+def test_chunk_append_survives_gap_from_prior_write(tmp_path: Path) -> None:
+    """If chunk_write left a gap (1, 3), append continues after the highest."""
+    chunks.chunk_write(tmp_path, session="s", index=1, content="a")
+    chunks.chunk_write(tmp_path, session="s", index=3, content="c")
+    out = chunks.chunk_append(tmp_path, session="s", content="d")
+    assert out["index"] == 4
+
+
+# ---------------------------------------------------------------------------
 # Resumability scenario (next-steps.md task 3.4)
 # ---------------------------------------------------------------------------
 

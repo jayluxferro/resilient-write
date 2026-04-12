@@ -345,6 +345,34 @@ def chunk_reset(
     return {"ok": True, "session": session, "removed": removed, "existed": True}
 
 
+def chunk_append(
+    workspace: Path,
+    *,
+    session: str,
+    content: str,
+    total_expected: int | None = None,
+    caller: str | None = None,
+) -> dict[str, Any]:
+    """Auto-incrementing chunk write.
+
+    Inspects the session directory to find the highest existing index,
+    then writes ``index + 1``.  If the session doesn't exist yet, starts
+    at 1.  This removes the need for the caller to track indices — each
+    call just appends the next piece.
+    """
+    _validate_session(session)
+    existing = _list_chunks(workspace, session)
+    next_index = (existing[-1][0] + 1) if existing else 1
+    return chunk_write(
+        workspace,
+        session=session,
+        index=next_index,
+        content=content,
+        total_expected=total_expected,
+        caller=caller,
+    )
+
+
 def chunk_status(
     workspace: Path,
     *,
@@ -369,4 +397,103 @@ def chunk_status(
         "total_expected": manifest.get("total_expected"),
         "present_indices": [i for i, _ in chunks],
         "chunk_dir": relative_to_workspace(workspace, sdir),
+    }
+
+
+def chunk_preview(
+    workspace: Path,
+    *,
+    session: str,
+    separator: str = "",
+) -> dict[str, Any]:
+    """Dry-run compose: return concatenated content without writing.
+
+    Performs all the same validation as chunk_compose (contiguity check,
+    total_expected reconciliation) but returns the content string instead
+    of writing it to disk. Useful for pre-compose validation: the agent
+    can run rw.validate on the preview before committing.
+    """
+    _validate_session(session)
+
+    sdir = _session_dir(workspace, session)
+    if not sdir.exists():
+        raise ResilientWriteError(
+            "stale_precondition",
+            "unknown",
+            context={"session": session, "reason": "session_not_found"},
+        )
+
+    chunks = _list_chunks(workspace, session)
+    if not chunks:
+        raise ResilientWriteError(
+            "stale_precondition",
+            "unknown",
+            context={"session": session, "reason": "no_chunks_found"},
+        )
+
+    # Verify contiguity from 1.
+    indices = [i for i, _ in chunks]
+    expected = list(range(1, len(indices) + 1))
+    if indices != expected:
+        missing = sorted(set(expected) - set(indices))
+        unexpected = sorted(set(indices) - set(expected))
+        raise ResilientWriteError(
+            "stale_precondition",
+            "unknown",
+            context={
+                "session": session,
+                "reason": "non_contiguous_chunks",
+                "have": indices,
+                "missing": missing,
+                "unexpected": unexpected,
+            },
+        )
+
+    # Reconcile with manifest's total_expected, if present.
+    manifest = _read_manifest(workspace, session) or {}
+    total_expected = manifest.get("total_expected")
+    if isinstance(total_expected, int) and len(indices) != total_expected:
+        raise ResilientWriteError(
+            "stale_precondition",
+            "unknown",
+            context={
+                "session": session,
+                "reason": "chunk_count_mismatch",
+                "have": len(indices),
+                "total_expected": total_expected,
+            },
+        )
+
+    # Read chunks, record per-chunk hashes for the response.
+    import hashlib
+
+    parts: list[bytes] = []
+    chunk_hashes: list[str] = []
+    for _index, path in chunks:
+        data = path.read_bytes()
+        parts.append(data)
+        chunk_hashes.append(hashlib.sha256(data).hexdigest())
+
+    sep_bytes = separator.encode("utf-8")
+    composed = sep_bytes.join(parts)
+    try:
+        composed_text = composed.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ResilientWriteError(
+            "write_corruption",
+            "encoding",
+            context={
+                "session": session,
+                "reason": f"composed_not_utf8: {exc}",
+            },
+        ) from exc
+
+    return {
+        "ok": True,
+        "session": session,
+        "content": composed_text,
+        "chunk_count": len(chunks),
+        "chunk_hashes": chunk_hashes,
+        "total_bytes": len(composed),
+        "preview": True,
     }

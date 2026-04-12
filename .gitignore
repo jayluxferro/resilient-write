@@ -28,3 +28,6 @@ uv.lock
 # context worth committing; user-profile.md is a working-style note
 # meant for local agent use and should not be published.
 .agent/memory/user-profile.md
+
+# misc
+git-push

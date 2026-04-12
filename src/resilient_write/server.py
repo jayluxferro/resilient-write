@@ -25,10 +25,13 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from . import chunks, handoff, journal, risk_score, safe_write, scratchpad
+from . import analytics, chunks, handoff, journal, risk_score, safe_write, scratchpad, validate
 from .errors import ResilientWriteError
 
 SERVER_NAME = "resilient-write"
+
+
+_UNSAFE_ROOTS = frozenset({"/", "/bin", "/sbin", "/usr", "/etc", "/var", "/tmp"})
 
 
 def workspace_root() -> Path:
@@ -36,9 +39,24 @@ def workspace_root() -> Path:
 
     Defaults to `$PWD`. Overridable via `$RW_WORKSPACE` so clients can
     pin an explicit directory when they spawn the stdio process.
+
+    Raises ``SystemExit`` if the resolved path is a system directory
+    (``/``, ``/usr``, …) — writing state files there is never intended
+    and almost certainly means ``$RW_WORKSPACE`` was not expanded by the
+    MCP client.
     """
     override = os.environ.get("RW_WORKSPACE")
-    return Path(override).resolve() if override else Path.cwd().resolve()
+    root = Path(override).resolve() if override else Path.cwd().resolve()
+    if str(root) in _UNSAFE_ROOTS:
+        import sys
+
+        print(
+            f"resilient-write: refusing to use '{root}' as workspace root. "
+            "Set $RW_WORKSPACE to your project directory.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    return root
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +227,26 @@ _CHUNK_RESET_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+_CHUNK_APPEND_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["session", "content"],
+    "properties": {
+        "session": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_\\-]{1,64}$",
+            "description": "Session name; chunks for the same session share a directory.",
+        },
+        "content": {"type": "string"},
+        "total_expected": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 999,
+            "description": "Optional hint; compose will refuse to run until this many chunks exist.",
+        },
+    },
+    "additionalProperties": False,
+}
+
 _CHUNK_STATUS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["session"],
@@ -273,6 +311,59 @@ _SCRATCH_GET_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+_VALIDATE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["content"],
+    "properties": {
+        "content": {
+            "type": "string",
+            "description": "Content to validate.",
+        },
+        "format_hint": {
+            "type": "string",
+            "enum": ["latex", "json", "python", "yaml"],
+            "description": "Format to validate as. Auto-detected if omitted.",
+        },
+        "target_path": {
+            "type": "string",
+            "description": "Optional path hint for auto-detecting format from extension.",
+        },
+    },
+    "additionalProperties": False,
+}
+
+_ANALYTICS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "since": {
+            "type": "string",
+            "description": "ISO timestamp; only include journal entries after this time.",
+        },
+        "session_filter": {
+            "type": "string",
+            "description": "Only include chunk sessions matching this name.",
+        },
+    },
+    "additionalProperties": False,
+}
+
+_CHUNK_PREVIEW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["session"],
+    "properties": {
+        "session": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_\\-]{1,64}$",
+        },
+        "separator": {
+            "type": "string",
+            "default": "",
+            "description": "Inserted between chunks during concatenation.",
+        },
+    },
+    "additionalProperties": False,
+}
+
 _JOURNAL_TAIL_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -329,6 +420,17 @@ _TOOL_DEFINITIONS: list[Tool] = [
             "directory on success."
         ),
         inputSchema=_CHUNK_COMPOSE_SCHEMA,
+    ),
+    Tool(
+        name="rw.chunk_append",
+        description=(
+            "L2 — auto-incrementing chunk write. Detects the highest "
+            "existing index in the session and writes index+1. No need "
+            "to track chunk numbers — just keep calling append. Ideal "
+            "for building a document section by section where a crash "
+            "between calls loses only the current section, not prior ones."
+        ),
+        inputSchema=_CHUNK_APPEND_SCHEMA,
     ),
     Tool(
         name="rw.chunk_reset",
@@ -402,6 +504,36 @@ _TOOL_DEFINITIONS: list[Tool] = [
         ),
         inputSchema=_JOURNAL_TAIL_SCHEMA,
     ),
+    Tool(
+        name="rw.validate",
+        description=(
+            "Format-aware syntax validator. Checks content for structural "
+            "errors (balanced braces, matched environments for LaTeX; parse "
+            "errors for JSON/Python/YAML). Returns a diagnostic envelope — "
+            "useful before chunk_compose to catch errors pre-write."
+        ),
+        inputSchema=_VALIDATE_SCHEMA,
+    ),
+    Tool(
+        name="rw.analytics",
+        description=(
+            "Journal analytics. Analyzes .resilient_write/journal.jsonl to "
+            "report write counts, timing, hot paths, session summaries, and "
+            "write velocity. Useful for understanding agent write patterns "
+            "and diagnosing performance issues."
+        ),
+        inputSchema=_ANALYTICS_SCHEMA,
+    ),
+    Tool(
+        name="rw.chunk_preview",
+        description=(
+            "L2 — dry-run compose. Returns the concatenated content of a "
+            "chunk session without writing to disk. Performs all contiguity "
+            "and total_expected checks. Use this to validate content (e.g. "
+            "via rw.validate) before committing with rw.chunk_compose."
+        ),
+        inputSchema=_CHUNK_PREVIEW_SCHEMA,
+    ),
 ]
 
 
@@ -437,6 +569,14 @@ def _dispatch(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             workspace,
             session=arguments["session"],
             index=int(arguments["index"]),
+            content=arguments["content"],
+            total_expected=arguments.get("total_expected"),
+            caller=SERVER_NAME,
+        )
+    if name == "rw.chunk_append":
+        return chunks.chunk_append(
+            workspace,
+            session=arguments["session"],
             content=arguments["content"],
             total_expected=arguments.get("total_expected"),
             caller=SERVER_NAME,
@@ -498,6 +638,24 @@ def _dispatch(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             filter_mode=arguments.get("filter_mode"),
         )
         return {"ok": True, "entries": entries}
+    if name == "rw.validate":
+        return validate.validate_content(
+            arguments["content"],
+            format_hint=arguments.get("format_hint"),
+            target_path=arguments.get("target_path"),
+        )
+    if name == "rw.analytics":
+        return analytics.analyze_journal(
+            workspace,
+            since=arguments.get("since"),
+            session_filter=arguments.get("session_filter"),
+        )
+    if name == "rw.chunk_preview":
+        return chunks.chunk_preview(
+            workspace,
+            session=arguments["session"],
+            separator=arguments.get("separator", ""),
+        )
     raise ResilientWriteError(
         "policy_violation",
         "unknown",
