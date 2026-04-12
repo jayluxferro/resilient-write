@@ -23,3 +23,8 @@ uv.lock
 
 # resilient-write consumer state (if this repo is ever used on itself)
 .resilient_write/
+
+# Personal agent notes. The rest of .agent/memory/ is project-level
+# context worth committing; user-profile.md is a working-style note
+# meant for local agent use and should not be published.
+.agent/memory/user-profile.md

@@ -132,6 +132,7 @@ for the schema and the default pattern list.
 | Variable | Purpose | Default |
 |---|---|---|
 | `RW_WORKSPACE` | Workspace root (where `.resilient_write/` and `HANDOFF.md` live). | `$PWD` |
+| `RW_POLICY_FILE` | Path to a custom L0 policy YAML. Absolute paths are honoured as-is; relative paths resolve against the workspace root. Missing file → fall back to defaults without error. | `.resilient_write/policy.yaml` |
 | `RW_SCRATCH_DISABLE_GET` | If set to any non-empty value, every `rw.scratch_get` call returns a `policy_violation`/`permission` envelope. Use in high-sensitivity workspaces to run the scratchpad in write-only mode. | unset |
 
 That is the full env-var surface today. Everything else is declared

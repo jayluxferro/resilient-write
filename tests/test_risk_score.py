@@ -216,6 +216,92 @@ def test_safe_write_classify_threshold_low(tmp_path: Path) -> None:
     assert exc.value.error == "blocked"
 
 
+def test_openai_key_regex_does_not_shadow_anthropic(tmp_path: Path) -> None:
+    """The `openai_key` regex used to match `sk-ant-...` as a secondary
+    hit, inflating the api_key family count. After the negative
+    lookahead, Anthropic tokens match `anthropic_oat` only."""
+    result = risk_score.score_content(f"{SYN_ANTHROPIC_OAT}\n")
+    api_key_names = [
+        p["pattern"]
+        for p in result["detected_patterns"]
+        if p["kind"] == "api_key"
+    ]
+    assert "anthropic_oat" in api_key_names
+    assert "openai_key" not in api_key_names
+
+
+def test_openai_key_regex_still_matches_real_openai(tmp_path: Path) -> None:
+    # A plain `sk-` (not `sk-ant-`, not `sk-proj-`) must still match.
+    content = "OPENAI_API_KEY=" + SYN_OPENAI_KEY + "\n"
+    result = risk_score.score_content(content)
+    api_key_names = {
+        p["pattern"]
+        for p in result["detected_patterns"]
+        if p["kind"] == "api_key"
+    }
+    assert "openai_key" in api_key_names
+
+
+def test_openai_project_key_no_double_hit(tmp_path: Path) -> None:
+    # `sk-proj-...` should match `openai_project_key` only.
+    token = "sk-proj-" + "Z" * 40
+    result = risk_score.score_content(token + "\n")
+    api_key_names = [
+        p["pattern"]
+        for p in result["detected_patterns"]
+        if p["kind"] == "api_key"
+    ]
+    assert "openai_project_key" in api_key_names
+    assert "openai_key" not in api_key_names
+
+
+def test_policy_file_env_var_absolute(tmp_path: Path, monkeypatch) -> None:
+    custom = tmp_path / "custom_policy.yaml"
+    custom.write_text("version: 1\ndisable_families: [pii]\n")
+    monkeypatch.setenv(policy.POLICY_FILE_ENV, str(custom))
+    pol = policy.load_policy(tmp_path)
+    result = risk_score.score_content(f"contact: {SYN_EMAIL}\n", policy=pol)
+    assert not any(p["kind"] == "pii" for p in result["detected_patterns"])
+
+
+def test_policy_file_env_var_relative(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "policies").mkdir()
+    (tmp_path / "policies" / "my.yaml").write_text(
+        "version: 1\ndisable_families: [pii]\n"
+    )
+    monkeypatch.setenv(policy.POLICY_FILE_ENV, "policies/my.yaml")
+    pol = policy.load_policy(tmp_path)
+    result = risk_score.score_content(f"contact: {SYN_EMAIL}\n", policy=pol)
+    assert not any(p["kind"] == "pii" for p in result["detected_patterns"])
+
+
+def test_policy_file_env_var_missing_file_falls_back_to_defaults(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv(policy.POLICY_FILE_ENV, str(tmp_path / "ghost.yaml"))
+    pol = policy.load_policy(tmp_path)
+    # Defaults still apply — no exception raised for a missing override.
+    result = risk_score.score_content(f"contact: {SYN_EMAIL}\n", policy=pol)
+    assert any(p["kind"] == "pii" for p in result["detected_patterns"])
+
+
+def test_policy_file_env_var_overrides_workspace_yaml(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Workspace YAML says disable pii, env var points elsewhere (empty).
+    (tmp_path / ".resilient_write").mkdir()
+    (tmp_path / ".resilient_write" / "policy.yaml").write_text(
+        "version: 1\ndisable_families: [pii]\n"
+    )
+    other = tmp_path / "other.yaml"
+    other.write_text("version: 1\n")
+    monkeypatch.setenv(policy.POLICY_FILE_ENV, str(other))
+    pol = policy.load_policy(tmp_path)
+    # Env var wins; pii is not disabled.
+    result = risk_score.score_content(f"contact: {SYN_EMAIL}\n", policy=pol)
+    assert any(p["kind"] == "pii" for p in result["detected_patterns"])
+
+
 def test_policy_yaml_bad_regex_rejected(tmp_path: Path) -> None:
     (tmp_path / ".resilient_write").mkdir()
     (tmp_path / ".resilient_write" / "policy.yaml").write_text(

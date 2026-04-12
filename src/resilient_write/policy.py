@@ -25,6 +25,7 @@ file stays forward-compatible.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +36,7 @@ import yaml
 from .errors import ResilientWriteError
 
 POLICY_FILENAME = "policy.yaml"
+POLICY_FILE_ENV = "RW_POLICY_FILE"
 
 # ---------------------------------------------------------------------------
 # Shipped defaults
@@ -64,7 +66,12 @@ DEFAULT_PATTERNS: list[tuple[str, str, str]] = [
     ("api_key", "anthropic_oat", r"sk-ant-oat\d+-[A-Za-z0-9_\-]{40,}"),
     ("api_key", "anthropic_api", r"sk-ant-api\d+-[A-Za-z0-9_\-]{40,}"),
     ("api_key", "openai_project_key", r"sk-proj-[A-Za-z0-9_\-]{40,}"),
-    ("api_key", "openai_key", r"sk-[A-Za-z0-9]{30,}"),
+    # Negative lookahead keeps this regex from double-matching Anthropic
+    # and OpenAI-project tokens that already have their own dedicated
+    # patterns above — otherwise an `sk-ant-oat01-...` string would hit
+    # both `anthropic_oat` and `openai_key`, producing noisier reports
+    # (scoring is damped, so it doesn't change verdicts materially).
+    ("api_key", "openai_key", r"sk-(?!ant-|proj-)[A-Za-z0-9]{30,}"),
     ("api_key", "datadog_client_key", r"pub[a-f0-9]{32}"),
     ("api_key", "statsig_client_key", r"client-[A-Za-z0-9]{30,}"),
     ("api_key", "aws_access_key_id", r"AKIA[0-9A-Z]{16}"),
@@ -225,9 +232,26 @@ def _merge_overrides(base: Policy, overrides: dict[str, Any]) -> Policy:
     )
 
 
+def _resolve_policy_path(workspace: Path) -> Path:
+    """Pick the policy YAML to load.
+
+    Precedence:
+    1. `$RW_POLICY_FILE` if set. Absolute paths are honoured as-is;
+       relative paths resolve against the workspace root.
+    2. `<workspace>/.resilient_write/policy.yaml` otherwise.
+    """
+    override = os.environ.get(POLICY_FILE_ENV)
+    if override:
+        p = Path(override)
+        if not p.is_absolute():
+            p = workspace / p
+        return p
+    return workspace / ".resilient_write" / POLICY_FILENAME
+
+
 def load_policy(workspace: Path) -> Policy:
     base = default_policy()
-    override_path = workspace / ".resilient_write" / POLICY_FILENAME
+    override_path = _resolve_policy_path(workspace)
     if not override_path.exists():
         return base
     try:

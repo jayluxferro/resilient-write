@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`RW_POLICY_FILE`** environment variable: point the L0 classifier at
+  a policy YAML outside `.resilient_write/`. Absolute paths honoured
+  as-is; relative paths resolve against the workspace root; missing
+  files fall back to defaults without error.
+- **End-to-end MCP stdio integration tests** (`tests/test_stdio_integration.py`):
+  spawn the console script as a real subprocess and drive it through
+  `mcp.ClientSession` (initialize handshake, `list_tools`, `call_tool`)
+  for one success case per layer plus one typed-error envelope case.
+
+### Changed
+- **L0 `openai_key` regex** tightened with a negative lookahead so
+  `sk-ant-*` / `sk-proj-*` tokens no longer double-match the generic
+  OpenAI pattern. Anthropic and OpenAI-project hits now count toward
+  their own pattern names only, producing cleaner detected-patterns
+  output (scoring was already damped, so no verdict drift).
+
+### Removed
+- `FIRST_INSTRUCTION.md` bootstrap file. Redundant with the "Your first
+  30 minutes" section in `AGENT.md`.
+- `.agent/memory/user-profile.md` untracked from git (still present
+  on disk for local agent use; gitignored going forward).
+
+
 ## [0.1.0] — 2026-04-12
 
 First working release. Complete six-layer MCP server with 134 tests.
