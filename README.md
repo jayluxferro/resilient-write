@@ -78,6 +78,100 @@ Add to your Claude Code, Cursor, or Codex MCP config:
 
 See `docs/INSTALL.md` for full setup instructions for all clients.
 
+## Usage
+
+### Basic: write a file safely
+
+The agent calls `rw.safe_write` instead of raw `Write`. The file is written atomically (temp → fsync → verify → rename) and logged to the audit journal.
+
+```
+rw.safe_write(path="src/main.py", content="print('hello')", mode="create")
+→ {"ok": true, "path": "src/main.py", "sha256": "a1b2c3...", "bytes": 14}
+```
+
+### Pre-flight risk check
+
+Before writing content that might contain tokens or credentials, run `rw.risk_score`:
+
+```
+rw.risk_score(content="Bearer sk-ant-oat01-AAAA...")
+→ {"ok": true, "score": 0.82, "verdict": "high",
+   "detected_patterns": [{"kind": "api_key", ...}],
+   "suggested_actions": [{"action": "redact", "targets": ["api_key"]}]}
+```
+
+If the verdict is `high`, redact the flagged patterns before writing.
+
+### Large files: chunked writes
+
+For files over ~5KB, build them section by section:
+
+```
+rw.chunk_append(session="my-report", content="# Introduction\n...")
+rw.chunk_append(session="my-report", content="# Methods\n...")
+rw.chunk_append(session="my-report", content="# Results\n...")
+
+# Preview before committing
+rw.chunk_preview(session="my-report")
+
+# Validate syntax
+rw.validate(content=<preview_content>, format_hint="latex")
+
+# Compose the final file
+rw.chunk_compose(session="my-report", output_path="report.tex", cleanup=true)
+```
+
+If a chunk fails mid-session, prior chunks are already on disk — just retry the failing one.
+
+### Handling errors
+
+Every failure returns a structured envelope the agent can branch on:
+
+```json
+{
+  "ok": false,
+  "error": "blocked",
+  "reason_hint": "content_filter",
+  "detected_patterns": ["api_key"],
+  "suggested_action": "redact",
+  "retry_budget": 2
+}
+```
+
+The agent reads `suggested_action` and acts accordingly — no guesswork, no blind retries.
+
+### Sensitive content: scratchpad
+
+Store raw credentials or PII out-of-band instead of writing them to the workspace:
+
+```
+rw.scratch_put(content="sk-ant-oat01-real-key-here", label="captured-token")
+→ {"ok": true, "sha256": "5c9a3b...", "dedup": false}
+```
+
+The `.resilient_write/` directory is gitignored. Reference the hash in your report instead of the raw value.
+
+### Session handoff
+
+Before ending a session (or when blocked), save state for the next agent:
+
+```
+rw.handoff_write(envelope={
+  "task_id": "my-report",
+  "status": "partial",
+  "agent": "claude-opus-4-6",
+  "summary": "Sections 1-3 complete, section 4 blocked on content filter",
+  "next_steps": ["Redact api_key patterns in section 4", "Retry chunk 4"],
+  "last_good_state": [{"path": "report.tex", "sha256": "4b0c12..."}]
+})
+```
+
+A fresh agent calls `rw.handoff_read` to pick up where you left off.
+
+### Making agents prefer rw.* tools automatically
+
+Drop a `CLAUDE.md` (for Claude Code) or `.cursorrules` (for Cursor) in your project root. The server also sends MCP-level `instructions` at initialization, telling compatible clients to prefer `rw.*` tools over raw writes. See the included `CLAUDE.md` for the recommended content.
+
 ## Status
 
 - [x] Architecture document

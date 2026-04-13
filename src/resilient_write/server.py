@@ -382,155 +382,154 @@ _TOOL_DEFINITIONS: list[Tool] = [
     Tool(
         name="rw.risk_score",
         description=(
-            "L0 — deterministic pre-flight classifier. Runs regex + size "
-            "heuristics over draft content and returns a structured "
-            "verdict (safe/low/medium/high) plus detected patterns and "
-            "suggested actions. No LLM, no network."
+            "Use before any file write to check for content that may "
+            "trigger safety filters. Runs deterministic regex + size "
+            "heuristics and returns a verdict (safe/low/medium/high) "
+            "with detected patterns and suggested actions. No LLM, "
+            "no network, <50ms."
         ),
         inputSchema=_RISK_SCORE_SCHEMA,
     ),
     Tool(
         name="rw.safe_write",
         description=(
-            "L1 — transactional write. Writes content to a temp file, "
-            "fsyncs, re-reads and verifies SHA-256, then atomically "
-            "renames over the destination. Appends one row to the "
-            ".resilient_write/journal.jsonl audit log. Returns a typed "
-            "error envelope on any failure."
+            "Use instead of raw Write/edit_file for all file creation "
+            "and overwrites. Writes atomically (temp file → fsync → "
+            "SHA-256 verify → rename), appends to an audit journal, "
+            "and returns structured error envelopes on failure so you "
+            "can branch on the reason rather than retrying blindly."
         ),
         inputSchema=_SAFE_WRITE_SCHEMA,
     ),
     Tool(
         name="rw.chunk_write",
         description=(
-            "L2 — write one chunk of a compose session. Chunks land "
-            "under .resilient_write/chunks/<session>/part-NNN.txt via "
-            "safe_write (mode=overwrite), so retrying a failing chunk "
-            "is idempotent. Each chunk gets its own journal row."
+            "Use for large files: write one numbered chunk to a session "
+            "directory via safe_write. Retrying a chunk is idempotent. "
+            "Each chunk gets its own journal row. Compose all chunks "
+            "into the final file with rw.chunk_compose."
         ),
         inputSchema=_CHUNK_WRITE_SCHEMA,
     ),
     Tool(
         name="rw.chunk_compose",
         description=(
-            "L2 — concatenate a session's chunk files (part-001..N) in "
-            "index order and write the result to output_path through "
-            "safe_write. Verifies contiguity and total_expected from "
-            "the session manifest. Optional cleanup wipes the session "
-            "directory on success."
+            "Use after all chunks are written to assemble the final "
+            "file. Concatenates part-001..N in order, verifies "
+            "contiguity and total_expected, then writes through "
+            "safe_write. Optional cleanup wipes the session directory."
         ),
         inputSchema=_CHUNK_COMPOSE_SCHEMA,
     ),
     Tool(
         name="rw.chunk_append",
         description=(
-            "L2 — auto-incrementing chunk write. Detects the highest "
-            "existing index in the session and writes index+1. No need "
-            "to track chunk numbers — just keep calling append. Ideal "
-            "for building a document section by section where a crash "
-            "between calls loses only the current section, not prior ones."
+            "Use for building files section by section — auto-detects "
+            "the highest chunk index and writes index+1. No need to "
+            "track numbers. If a crash occurs between calls, only the "
+            "current section is lost; prior chunks are already on disk."
         ),
         inputSchema=_CHUNK_APPEND_SCHEMA,
     ),
     Tool(
         name="rw.chunk_reset",
         description=(
-            "L2 — destructively wipe an in-progress chunk session. "
-            "Returns the number of removed chunk files."
+            "Use to discard an abandoned or stale chunk session. "
+            "Destructively wipes all chunk files and returns the count "
+            "of removed files."
         ),
         inputSchema=_CHUNK_RESET_SCHEMA,
     ),
     Tool(
         name="rw.chunk_status",
         description=(
-            "Inspection helper — report which chunk indices are "
-            "currently present for a session and what total was "
-            "declared by the most recent chunk_write call."
+            "Use to inspect a chunk session before compose — reports "
+            "which indices are present and what total_expected was "
+            "declared. Helps decide which chunk to retry."
         ),
         inputSchema=_CHUNK_STATUS_SCHEMA,
     ),
     Tool(
         name="rw.scratch_put",
         description=(
-            "L4 — store raw material out-of-band under "
-            ".resilient_write/scratch/<sha256>.bin and append a row to "
-            "index.jsonl. Content-addressed: identical bytes dedupe "
-            "automatically. Accepts utf-8 or base64-encoded input."
+            "Use to store sensitive material (credentials, PII, binary "
+            "blobs) out-of-band instead of writing it to the workspace "
+            "tree. Content-addressed by SHA-256; identical payloads "
+            "deduplicate automatically."
         ),
         inputSchema=_SCRATCH_PUT_SCHEMA,
     ),
     Tool(
         name="rw.scratch_ref",
         description=(
-            "L4 — look up a scratchpad index entry by sha256 or label "
-            "without returning the content itself. Useful to verify "
-            "what's there before deciding whether to surface it."
+            "Use to check what is in the scratchpad without retrieving "
+            "the content. Looks up metadata by sha256 or label."
         ),
         inputSchema=_SCRATCH_REF_SCHEMA,
     ),
     Tool(
         name="rw.scratch_get",
         description=(
-            "L4 — return raw content by hash. Gated by the "
-            "$RW_SCRATCH_DISABLE_GET environment variable: when that "
-            "is set, every call returns a policy_violation envelope so "
-            "the workspace can run in write-only mode."
+            "Use to retrieve scratchpad content by hash. Gated by "
+            "$RW_SCRATCH_DISABLE_GET — when set, returns a "
+            "policy_violation envelope (write-only mode)."
         ),
         inputSchema=_SCRATCH_GET_SCHEMA,
     ),
     Tool(
         name="rw.handoff_write",
         description=(
-            "L5 — write a HANDOFF.md continuity envelope (YAML front-"
-            "matter + Markdown body). Validates required fields and "
-            "reports drift warnings for any last_good_state file whose "
-            "current hash disagrees with the recorded one."
+            "Use at end of session or when blocked to save task state "
+            "for the next agent. Writes a HANDOFF.md envelope with "
+            "task_id, status, next_steps, and last_good_state hashes. "
+            "Reports drift warnings for files that changed since last "
+            "recorded state."
         ),
         inputSchema=_HANDOFF_WRITE_SCHEMA,
     ),
     Tool(
         name="rw.handoff_read",
         description=(
-            "L5 — parse a HANDOFF.md envelope and return the structured "
-            "front-matter plus body. Reports drift warnings."
+            "Use at start of session to resume a prior task. Parses "
+            "HANDOFF.md and returns the structured envelope plus drift "
+            "warnings for any files whose hashes have changed."
         ),
         inputSchema=_HANDOFF_READ_SCHEMA,
     ),
     Tool(
         name="rw.journal_tail",
         description=(
-            "Inspection helper — return the last N rows of the L1 write "
-            "journal, optionally filtered by path or mode."
+            "Use to inspect recent write history — returns the last N "
+            "journal rows, optionally filtered by path or mode."
         ),
         inputSchema=_JOURNAL_TAIL_SCHEMA,
     ),
     Tool(
         name="rw.validate",
         description=(
-            "Format-aware syntax validator. Checks content for structural "
-            "errors (balanced braces, matched environments for LaTeX; parse "
-            "errors for JSON/Python/YAML). Returns a diagnostic envelope — "
-            "useful before chunk_compose to catch errors pre-write."
+            "Use before writing to catch syntax errors. Checks LaTeX "
+            "(braces, environments), JSON, Python, and YAML. Returns "
+            "a diagnostic envelope with line numbers. Pair with "
+            "rw.chunk_preview to validate before rw.chunk_compose."
         ),
         inputSchema=_VALIDATE_SCHEMA,
     ),
     Tool(
         name="rw.analytics",
         description=(
-            "Journal analytics. Analyzes .resilient_write/journal.jsonl to "
-            "report write counts, timing, hot paths, session summaries, and "
-            "write velocity. Useful for understanding agent write patterns "
-            "and diagnosing performance issues."
+            "Use to understand write patterns — analyzes the journal "
+            "to report write counts, timing, hot paths, chunk-session "
+            "summaries, and write velocity."
         ),
         inputSchema=_ANALYTICS_SCHEMA,
     ),
     Tool(
         name="rw.chunk_preview",
         description=(
-            "L2 — dry-run compose. Returns the concatenated content of a "
-            "chunk session without writing to disk. Performs all contiguity "
-            "and total_expected checks. Use this to validate content (e.g. "
-            "via rw.validate) before committing with rw.chunk_compose."
+            "Use before rw.chunk_compose to preview the result. "
+            "Returns concatenated content without writing to disk. "
+            "Performs all contiguity and total_expected checks. Run "
+            "rw.validate on the result to catch errors pre-commit."
         ),
         inputSchema=_CHUNK_PREVIEW_SCHEMA,
     ),
@@ -679,8 +678,22 @@ def _envelope_or_error(
 # ---------------------------------------------------------------------------
 
 
+_SERVER_INSTRUCTIONS = (
+    "This workspace has the resilient-write MCP server active. "
+    "Prefer rw.safe_write over raw Write/edit_file for all file creation "
+    "and overwrites — it provides atomic writes, hash verification, "
+    "structured error envelopes, and an audit journal. "
+    "For files larger than ~5KB, use rw.chunk_append to build the file "
+    "section by section, then rw.chunk_compose to assemble it. "
+    "Before writing content that may contain tokens or credentials, "
+    "call rw.risk_score first and redact any flagged patterns. "
+    "At the end of a session or when blocked, call rw.handoff_write "
+    "to save task state for the next agent."
+)
+
+
 def build_server() -> Server:
-    """Construct the MCP server instance with all Stage-1 tools wired."""
+    """Construct the MCP server instance with all tools wired."""
     server: Server = Server(SERVER_NAME)
 
     @server.list_tools()
@@ -704,12 +717,10 @@ def build_server() -> Server:
 
 async def _run() -> None:
     server = build_server()
+    init_options = server.create_initialization_options()
+    init_options.instructions = _SERVER_INSTRUCTIONS
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options(),
-        )
+        await server.run(read_stream, write_stream, init_options)
 
 
 def main() -> None:
