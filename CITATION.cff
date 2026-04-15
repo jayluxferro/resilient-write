@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+title: "Resilient Write: A Six-Layer Durable Write Surface for LLM Coding Agents"
+message: "If you use this software, please cite the paper below."
+type: software
+license: MIT
+repository-code: "https://github.com/jayluxferro/resilient-write"
+url: "https://arxiv.org/abs/2604.10842"
+authors:
+  - family-names: Owusu Agyemang
+    given-names: Justice
+    email: jay@sperixlabs.org
+  - family-names: Kponyo
+    given-names: Jerry John
+  - family-names: Amponsah
+    given-names: Elliot
+  - family-names: Addo Boakye
+    given-names: Godfred Manu
+  - family-names: Obour Agyekum
+    given-names: Kwame Opuni-Boachie
+preferred-citation:
+  type: article
+  title: "Resilient Write: A Six-Layer Durable Write Surface for LLM Coding Agents"
+  authors:
+    - family-names: Owusu Agyemang
+      given-names: Justice
+    - family-names: Kponyo
+      given-names: Jerry John
+    - family-names: Amponsah
+      given-names: Elliot
+    - family-names: Addo Boakye
+      given-names: Godfred Manu
+    - family-names: Obour Agyekum
+      given-names: Kwame Opuni-Boachie
+  year: 2026
+  month: 4
+  journal: "arXiv preprint arXiv:2604.10842"
+  url: "https://arxiv.org/abs/2604.10842"

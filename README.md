@@ -4,6 +4,7 @@
 [![Python 3.12+](https://img.shields.io/pypi/pyversions/resilient-write)](https://pypi.org/project/resilient-write/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Tests](https://img.shields.io/badge/tests-186%20passed-brightgreen)]()
+[![arXiv](https://img.shields.io/badge/arXiv-2604.10842-b31b1b.svg)](https://arxiv.org/abs/2604.10842)
 
 An MCP server that gives coding agents a **durable, fault-tolerant write surface**
 so they can keep making forward progress when a tool call is blocked by a content
@@ -181,6 +182,20 @@ Drop a `CLAUDE.md` (for Claude Code) or `.cursorrules` (for Cursor) in your proj
 - [x] Test suite (186 tests, all green)
 - [x] Published MCP config snippets (`docs/INSTALL.md`)
 - [x] [Published to PyPI](https://pypi.org/project/resilient-write/)
+
+## Citation
+
+If you use resilient-write in your research, please cite:
+
+```bibtex
+@article{agyemang2026resilientwrite,
+  title   = {Resilient Write: A Six-Layer Durable Write Surface for LLM Coding Agents},
+  author  = {Owusu Agyemang, Justice and Kponyo, Jerry John and Amponsah, Elliot and Addo Boakye, Godfred Manu and Obour Agyekum, Kwame Opuni-Boachie},
+  journal = {arXiv preprint arXiv:2604.10842},
+  year    = {2026},
+  url     = {https://arxiv.org/abs/2604.10842}
+}
+```
 
 ## Origin
 
