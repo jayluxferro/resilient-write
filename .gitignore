@@ -23,6 +23,7 @@ uv.lock
 
 # resilient-write consumer state (if this repo is ever used on itself)
 .resilient_write/
+HANDOFF.md
 
 # Agent development notes (not part of the product)
 .agent/
