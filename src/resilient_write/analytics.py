@@ -22,6 +22,12 @@ _CHUNK_PATH_RE = re.compile(
     r"^\.resilient_write/chunks/([A-Za-z0-9_\-]{1,64})/part-\d{3}\.txt$"
 )
 
+# Matches journal paths written by checkpoint_save:
+#   .resilient_write/checkpoints/<name>.json
+_CHECKPOINT_PATH_RE = re.compile(
+    r"^\.resilient_write/checkpoints/([A-Za-z0-9_\-]{1,64})\.json$"
+)
+
 
 def _parse_ts(iso: str) -> datetime:
     """Parse an ISO-8601 timestamp into an aware UTC datetime.
@@ -88,6 +94,11 @@ def analyze_journal(
     # session tracking
     sessions: dict[str, dict[str, Any]] = {}
 
+    # checkpoint tracking
+    cp_total_saves = 0
+    cp_overwrites = 0
+    cp_by_name: dict[str, dict[str, Any]] = {}
+
     # velocity: per-minute write counts
     minute_counts: Counter[str] = Counter()
 
@@ -135,6 +146,24 @@ def analyze_journal(
         # velocity per-minute bucket
         if ts:
             minute_counts[_truncate_to_minute(ts)] += 1
+
+        # checkpoint detection
+        cm = _CHECKPOINT_PATH_RE.match(path)
+        if cm:
+            cp_name = cm.group(1)
+            cp_total_saves += 1
+            if mode == "overwrite":
+                cp_overwrites += 1
+            cp_entry = cp_by_name.setdefault(cp_name, {
+                "saves": 0,
+                "total_bytes": 0,
+                "first_write": ts,
+                "last_write": ts,
+            })
+            cp_entry["saves"] += 1
+            cp_entry["total_bytes"] += nbytes
+            if ts:
+                cp_entry["last_write"] = ts
 
         # chunk session detection
         m = _CHUNK_PATH_RE.match(path)
@@ -217,6 +246,11 @@ def analyze_journal(
         "timeline": timeline,
         "hot_paths": hot_paths,
         "sessions": sessions_out,
+        "checkpoints": {
+            "total_saves": cp_total_saves,
+            "overwrites": cp_overwrites,
+            "by_name": cp_by_name,
+        },
         "write_velocity": {
             "writes_per_minute": writes_per_minute,
             "avg_bytes_per_write": avg_bytes,

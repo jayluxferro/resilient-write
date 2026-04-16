@@ -25,7 +25,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from . import analytics, chunks, handoff, journal, risk_score, safe_write, scratchpad, validate
+from . import analytics, checkpoint, chunks, handoff, journal, risk_score, safe_write, scratchpad, validate
 from .errors import ResilientWriteError
 
 SERVER_NAME = "resilient-write"
@@ -364,6 +364,64 @@ _CHUNK_PREVIEW_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+_CHECKPOINT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["name", "data"],
+    "properties": {
+        "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_\\-]{1,64}$",
+            "description": "Named checkpoint identifier.",
+        },
+        "data": {
+            "description": "Structured data to checkpoint (must be JSON-serializable).",
+        },
+        "format": {
+            "type": "string",
+            "enum": ["json", "yaml", "markdown"],
+            "default": "json",
+            "description": "Storage format for the data payload.",
+        },
+        "ttl": {
+            "type": "string",
+            "default": "session",
+            "description": "Lifetime hint: session | permanent | ISO 8601 duration (e.g. PT1H).",
+        },
+    },
+    "additionalProperties": False,
+}
+
+_CHECKPOINT_READ_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["name"],
+    "properties": {
+        "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_\\-]{1,64}$",
+            "description": "Name of the checkpoint to retrieve.",
+        },
+    },
+    "additionalProperties": False,
+}
+
+_CHECKPOINT_LIST_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": False,
+}
+
+_CHECKPOINT_CLEANUP_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "include_session": {
+            "type": "boolean",
+            "default": True,
+            "description": "Remove checkpoints with ttl=session (default true).",
+        },
+    },
+    "additionalProperties": False,
+}
+
 _JOURNAL_TAIL_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -533,6 +591,45 @@ _TOOL_DEFINITIONS: list[Tool] = [
         ),
         inputSchema=_CHUNK_PREVIEW_SCHEMA,
     ),
+    Tool(
+        name="rw.checkpoint",
+        description=(
+            "Use to save a named snapshot of accumulated intermediate "
+            "data to disk mid-session. Offloads context-heavy data "
+            "(e.g. parallel agent results) so context compaction "
+            "doesn't lose fidelity. Overwrites existing checkpoints "
+            "with the same name. Written atomically via safe_write."
+        ),
+        inputSchema=_CHECKPOINT_SCHEMA,
+    ),
+    Tool(
+        name="rw.checkpoint_read",
+        description=(
+            "Use to retrieve a previously saved checkpoint by name. "
+            "Cheaper than re-reading agent outputs or re-running "
+            "sub-tasks. Returns the full data payload with metadata."
+        ),
+        inputSchema=_CHECKPOINT_READ_SCHEMA,
+    ),
+    Tool(
+        name="rw.checkpoint_list",
+        description=(
+            "Use to list all available checkpoints with their sizes, "
+            "formats, and timestamps — without loading data payloads. "
+            "Useful for deciding what to read or clean up."
+        ),
+        inputSchema=_CHECKPOINT_LIST_SCHEMA,
+    ),
+    Tool(
+        name="rw.checkpoint_cleanup",
+        description=(
+            "Use to remove expired checkpoints based on TTL. Removes "
+            "session-scoped checkpoints by default, checks ISO duration "
+            "TTLs against current time, and always keeps permanent "
+            "checkpoints. Returns a list of removed entries."
+        ),
+        inputSchema=_CHECKPOINT_CLEANUP_SCHEMA,
+    ),
 ]
 
 
@@ -655,6 +752,27 @@ def _dispatch(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             session=arguments["session"],
             separator=arguments.get("separator", ""),
         )
+    if name == "rw.checkpoint":
+        return checkpoint.checkpoint_save(
+            workspace,
+            name=arguments["name"],
+            data=arguments["data"],
+            fmt=arguments.get("format", "json"),
+            ttl=arguments.get("ttl", "session"),
+            caller=SERVER_NAME,
+        )
+    if name == "rw.checkpoint_read":
+        return checkpoint.checkpoint_read(
+            workspace,
+            name=arguments["name"],
+        )
+    if name == "rw.checkpoint_list":
+        return checkpoint.checkpoint_list(workspace)
+    if name == "rw.checkpoint_cleanup":
+        return checkpoint.checkpoint_cleanup(
+            workspace,
+            include_session=bool(arguments.get("include_session", True)),
+        )
     raise ResilientWriteError(
         "policy_violation",
         "unknown",
@@ -687,8 +805,12 @@ _SERVER_INSTRUCTIONS = (
     "section by section, then rw.chunk_compose to assemble it. "
     "Before writing content that may contain tokens or credentials, "
     "call rw.risk_score first and redact any flagged patterns. "
+    "When accumulating large intermediate data (e.g. parallel agent "
+    "results), use rw.checkpoint to save named snapshots to disk before "
+    "context pressure causes compaction. Retrieve with rw.checkpoint_read. "
     "At the end of a session or when blocked, call rw.handoff_write "
-    "to save task state for the next agent."
+    "to save task state for the next agent — it auto-includes "
+    "checkpoint references."
 )
 
 

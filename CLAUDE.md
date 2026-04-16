@@ -15,6 +15,10 @@ or large-scale content generation.
 | Validate syntax before writing | `rw.validate` |
 | Preview chunked content | `rw.chunk_preview` |
 | Store sensitive material | `rw.scratch_put` |
+| Save intermediate data mid-session | `rw.checkpoint` |
+| Retrieve a checkpoint | `rw.checkpoint_read` |
+| List available checkpoints | `rw.checkpoint_list` |
+| Clean up expired checkpoints | `rw.checkpoint_cleanup` |
 | Save session state for handoff | `rw.handoff_write` |
 | Inspect write history | `rw.journal_tail` or `rw.analytics` |
 
@@ -45,4 +49,6 @@ filters, exceeds size limits, or contains token-shaped strings. The
 - If verdict is "high": redact detected patterns, then write
 - If a write fails: read the error envelope's `suggested_action`
 - Never retry identical rejected content — change the content first
+- Use `rw.checkpoint` to offload context-heavy intermediate data to disk
+- Use `rw.checkpoint_cleanup` to remove session/expired checkpoints
 - Use `rw.handoff_write` before session end if work is incomplete

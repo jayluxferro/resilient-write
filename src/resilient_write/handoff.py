@@ -27,6 +27,18 @@ from .journal import utc_now_iso
 from .paths import ensure_state_dir, relative_to_workspace, resolve_in_workspace
 from .safe_write import _file_sha256  # local helper, reused verbatim
 
+# Lazy import to avoid circular dependency — checkpoint imports safe_write
+# which is fine, but we don't want checkpoint at module level here.
+_checkpoint_mod = None
+
+
+def _get_checkpoint_mod():
+    global _checkpoint_mod
+    if _checkpoint_mod is None:
+        from . import checkpoint as _cp
+        _checkpoint_mod = _cp
+    return _checkpoint_mod
+
 DEFAULT_HANDOFF_FILENAME = "HANDOFF.md"
 VALID_STATUSES = {"complete", "partial", "blocked", "handed_off"}
 
@@ -198,7 +210,11 @@ def handoff_write(
 
     warnings = _check_drift(workspace, envelope["last_good_state"])
 
-    return {
+    # Auto-include checkpoint references so the next agent knows what
+    # intermediate data is available on disk.
+    cp_refs = _get_checkpoint_mod().list_checkpoint_refs(workspace)
+
+    result_envelope: dict[str, Any] = {
         "ok": True,
         "handoff_path": result["path"],
         "sha256": result["sha256"],
@@ -206,6 +222,9 @@ def handoff_write(
         "journal_id": result["journal_id"],
         "drift_warnings": warnings,
     }
+    if cp_refs:
+        result_envelope["checkpoint_refs"] = cp_refs
+    return result_envelope
 
 
 def handoff_read(
@@ -224,10 +243,18 @@ def handoff_read(
     envelope, body = _parse(text)
     _validate(envelope)
     warnings = _check_drift(workspace, envelope["last_good_state"])
-    return {
+
+    # Include available checkpoints so the resuming agent can see what
+    # intermediate data persists from the prior session.
+    cp_refs = _get_checkpoint_mod().list_checkpoint_refs(workspace)
+
+    result_envelope: dict[str, Any] = {
         "ok": True,
         "handoff_path": relative_to_workspace(workspace, target),
         "envelope": envelope,
         "body": body,
         "drift_warnings": warnings,
     }
+    if cp_refs:
+        result_envelope["checkpoint_refs"] = cp_refs
+    return result_envelope
