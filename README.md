@@ -3,7 +3,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/resilient-write)](https://pypi.org/project/resilient-write/)
 [![Python 3.12+](https://img.shields.io/pypi/pyversions/resilient-write)](https://pypi.org/project/resilient-write/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-186%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-211%20passed-brightgreen)]()
 [![arXiv](https://img.shields.io/badge/arXiv-2604.10842-b31b1b.svg)](https://arxiv.org/abs/2604.10842)
 
 An MCP server that gives coding agents a **durable, fault-tolerant write surface**
@@ -59,9 +59,50 @@ Or run directly:
 uvx resilient-write
 ```
 
-### MCP client configuration
+## Transports
 
-Add to your Claude Code, Cursor, or Codex MCP config:
+The server supports three transports selected with `--transport`:
+
+| Flag | Protocol | When to use |
+|---|---|---|
+| `--transport stdio` | stdin/stdout (default) | Local MCP clients (Claude Code, Cursor, Codex) |
+| `--transport sse` | HTTP + Server-Sent Events | Remote clients, browser-based tooling |
+| `--transport http` | Streamable HTTP | Remote clients that need session resumability |
+
+### stdio (default)
+
+```bash
+resilient-write
+# or explicitly:
+resilient-write --transport stdio
+```
+
+### SSE
+
+```bash
+resilient-write --transport sse --host 127.0.0.1 --port 8000
+```
+
+Exposes two endpoints:
+
+- `GET  /sse` — client connects here to open the event stream
+- `POST /messages/` — client posts JSON-RPC messages here
+
+### Streamable HTTP
+
+```bash
+resilient-write --transport http --host 127.0.0.1 --port 8000
+```
+
+Exposes a single endpoint:
+
+- `POST/GET /mcp` — all JSON-RPC traffic, with SSE streaming in responses
+
+Sessions are tracked server-side. Reconnecting clients resume their session via the `Mcp-Session-Id` response header.
+
+## MCP client configuration
+
+### stdio (Claude Code, Cursor, Codex)
 
 ```json
 {
@@ -72,6 +113,32 @@ Add to your Claude Code, Cursor, or Codex MCP config:
       "env": {
         "RW_WORKSPACE": "/path/to/your/project"
       }
+    }
+  }
+}
+```
+
+### SSE
+
+```json
+{
+  "mcpServers": {
+    "resilient-write": {
+      "type": "sse",
+      "url": "http://127.0.0.1:8000/sse"
+    }
+  }
+}
+```
+
+### Streamable HTTP
+
+```json
+{
+  "mcpServers": {
+    "resilient-write": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp"
     }
   }
 }
@@ -179,9 +246,10 @@ Drop a `CLAUDE.md` (for Claude Code) or `.cursorrules` (for Cursor) in your proj
 - [x] Per-layer specs
 - [x] JSON schemas (`spec/errors.schema.json`)
 - [x] Reference Python implementation (all six layers, 16 tools)
-- [x] Test suite (186 tests, all green)
+- [x] Test suite (211 tests, all green)
 - [x] Published MCP config snippets (`docs/INSTALL.md`)
 - [x] [Published to PyPI](https://pypi.org/project/resilient-write/)
+- [x] HTTP and SSE transport support (`--transport sse|http`)
 
 ## Citation
 

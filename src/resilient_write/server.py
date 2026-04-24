@@ -1,11 +1,18 @@
-"""MCP stdio entrypoint for resilient-write.
+"""MCP entrypoint for resilient-write.
 
-Registers the Stage-1 tool surface:
+Supports three transports selected via ``--transport``:
+
+    stdio  (default)  — classic pipe-based MCP, suitable for local clients
+    sse               — HTTP + Server-Sent Events  (GET /sse, POST /messages/)
+    http              — Streamable HTTP  (POST/GET /mcp, session-aware)
+
+Registers the full tool surface across all five layers:
 
     rw.safe_write      — L1 transactional write
     rw.handoff_write   — L5 continuity envelope write
     rw.handoff_read    — L5 continuity envelope read
     rw.journal_tail    — inspection helper for the L1 journal
+    … (16 tools total)
 
 Each handler calls into a pure-Python layer module. Failures raise
 `ResilientWriteError`; the MCP adapter catches those and returns the L3
@@ -816,7 +823,7 @@ _SERVER_INSTRUCTIONS = (
 
 def build_server() -> Server:
     """Construct the MCP server instance with all tools wired."""
-    server: Server = Server(SERVER_NAME)
+    server: Server = Server(SERVER_NAME, instructions=_SERVER_INSTRUCTIONS)
 
     @server.list_tools()
     async def _list_tools() -> list[Tool]:
@@ -837,17 +844,115 @@ def build_server() -> Server:
     return server
 
 
-async def _run() -> None:
+async def _run_stdio() -> None:
     server = build_server()
     init_options = server.create_initialization_options()
-    init_options.instructions = _SERVER_INSTRUCTIONS
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, init_options)
 
 
+async def _run_sse(host: str, port: int) -> None:
+    """Serve over HTTP with Server-Sent Events transport.
+
+    Endpoints:
+        GET  /sse       — open the SSE stream (client listens here)
+        POST /messages/ — client posts JSON-RPC messages here
+    """
+    import uvicorn
+    from mcp.server.sse import SseServerTransport
+    from starlette.applications import Starlette
+    from starlette.routing import Mount, Route
+
+    server = build_server()
+    init_options = server.create_initialization_options()
+    sse = SseServerTransport("/messages/")
+
+    async def handle_sse(request):  # type: ignore[no-untyped-def]
+        async with sse.connect_sse(
+            request.scope, request.receive, request._send
+        ) as streams:
+            await server.run(streams[0], streams[1], init_options)
+
+    starlette_app = Starlette(
+        routes=[
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages/", app=sse.handle_post_message),
+        ]
+    )
+
+    config = uvicorn.Config(starlette_app, host=host, port=port, log_level="info")
+    srv = uvicorn.Server(config)
+    await srv.serve()
+
+
+async def _run_streamable_http(host: str, port: int) -> None:
+    """Serve over Streamable HTTP transport.
+
+    Endpoint:
+        POST/GET /mcp — single endpoint for all JSON-RPC traffic,
+                        with optional SSE streaming in responses.
+
+    Sessions are tracked server-side; reconnecting clients resume
+    their session via the ``Mcp-Session-Id`` header.
+    """
+    import contextlib
+
+    import uvicorn
+    from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    server = build_server()
+    session_manager = StreamableHTTPSessionManager(app=server, stateless=False)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app):  # type: ignore[no-untyped-def]
+        async with session_manager.run():
+            yield
+
+    starlette_app = Starlette(
+        routes=[Mount("/mcp", app=session_manager.handle_request)],
+        lifespan=lifespan,
+    )
+
+    config = uvicorn.Config(starlette_app, host=host, port=port, log_level="info")
+    srv = uvicorn.Server(config)
+    await srv.serve()
+
+
 def main() -> None:
     """Console-script entry point."""
-    asyncio.run(_run())
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="resilient-write",
+        description="Resilient-write MCP server",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse", "http"],
+        default="stdio",
+        help="Transport to use: stdio (default), sse, or http",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind host for sse/http transports (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Bind port for sse/http transports (default: 8000)",
+    )
+    args = parser.parse_args()
+
+    if args.transport == "stdio":
+        asyncio.run(_run_stdio())
+    elif args.transport == "sse":
+        asyncio.run(_run_sse(args.host, args.port))
+    else:
+        asyncio.run(_run_streamable_http(args.host, args.port))
 
 
 if __name__ == "__main__":
