@@ -241,7 +241,7 @@ class TestCheckpointHandoffIntegration:
         checkpoint.checkpoint_save(tmp_path, name="analysis", data={"score": 10})
 
         result = handoff.handoff_write(
-            tmp_path,
+            [tmp_path],
             {
                 "task_id": "t1",
                 "status": "partial",
@@ -258,7 +258,7 @@ class TestCheckpointHandoffIntegration:
     def test_handoff_read_includes_refs(self, tmp_path: Path) -> None:
         checkpoint.checkpoint_save(tmp_path, name="data", data={"x": 1})
         handoff.handoff_write(
-            tmp_path,
+            [tmp_path],
             {
                 "task_id": "t2",
                 "status": "partial",
@@ -269,13 +269,13 @@ class TestCheckpointHandoffIntegration:
             },
         )
 
-        result = handoff.handoff_read(tmp_path)
+        result = handoff.handoff_read([tmp_path])
         assert "checkpoint_refs" in result
         assert result["checkpoint_refs"][0]["name"] == "data"
 
     def test_handoff_no_refs_when_no_checkpoints(self, tmp_path: Path) -> None:
         handoff.handoff_write(
-            tmp_path,
+            [tmp_path],
             {
                 "task_id": "t3",
                 "status": "complete",
@@ -285,7 +285,7 @@ class TestCheckpointHandoffIntegration:
                 "last_good_state": [],
             },
         )
-        result = handoff.handoff_read(tmp_path)
+        result = handoff.handoff_read([tmp_path])
         assert "checkpoint_refs" not in result
 
 

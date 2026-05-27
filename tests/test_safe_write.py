@@ -18,7 +18,7 @@ def _sha(text: str) -> str:
 
 
 def test_create_writes_file_and_journal(tmp_path: Path) -> None:
-    result = safe_write(tmp_path, path="notes.txt", content="hello\n")
+    result = safe_write([tmp_path], path="notes.txt", content="hello\n")
 
     assert result["ok"] is True
     assert result["path"] == "notes.txt"
@@ -39,22 +39,22 @@ def test_create_writes_file_and_journal(tmp_path: Path) -> None:
 def test_create_refuses_existing_file(tmp_path: Path) -> None:
     (tmp_path / "a.txt").write_text("old\n")
     with pytest.raises(ResilientWriteError) as exc:
-        safe_write(tmp_path, path="a.txt", content="new\n")
+        safe_write([tmp_path], path="a.txt", content="new\n")
     assert exc.value.error == "stale_precondition"
     assert (tmp_path / "a.txt").read_text() == "old\n"
 
 
 def test_overwrite_replaces_content(tmp_path: Path) -> None:
-    safe_write(tmp_path, path="a.txt", content="v1\n")
-    safe_write(tmp_path, path="a.txt", content="v2\n", mode="overwrite")
+    safe_write([tmp_path], path="a.txt", content="v1\n")
+    safe_write([tmp_path], path="a.txt", content="v2\n", mode="overwrite")
     assert (tmp_path / "a.txt").read_text() == "v2\n"
     assert len(journal.tail(tmp_path, n=10)) == 2
 
 
 def test_append_preserves_existing_bytes(tmp_path: Path) -> None:
-    safe_write(tmp_path, path="log.txt", content="line1\n")
+    safe_write([tmp_path], path="log.txt", content="line1\n")
     result = safe_write(
-        tmp_path, path="log.txt", content="line2\n", mode="append"
+        [tmp_path], path="log.txt", content="line2\n", mode="append"
     )
     assert (tmp_path / "log.txt").read_text() == "line1\nline2\n"
     assert result["sha256"] == _sha("line1\nline2\n")
@@ -62,9 +62,9 @@ def test_append_preserves_existing_bytes(tmp_path: Path) -> None:
 
 
 def test_expected_prev_sha256_matches(tmp_path: Path) -> None:
-    r1 = safe_write(tmp_path, path="a.txt", content="one\n")
+    r1 = safe_write([tmp_path], path="a.txt", content="one\n")
     r2 = safe_write(
-        tmp_path,
+        [tmp_path],
         path="a.txt",
         content="two\n",
         mode="overwrite",
@@ -74,10 +74,10 @@ def test_expected_prev_sha256_matches(tmp_path: Path) -> None:
 
 
 def test_expected_prev_sha256_mismatch_rejects(tmp_path: Path) -> None:
-    safe_write(tmp_path, path="a.txt", content="one\n")
+    safe_write([tmp_path], path="a.txt", content="one\n")
     with pytest.raises(ResilientWriteError) as exc:
         safe_write(
-            tmp_path,
+            [tmp_path],
             path="a.txt",
             content="two\n",
             mode="overwrite",
@@ -88,23 +88,23 @@ def test_expected_prev_sha256_mismatch_rejects(tmp_path: Path) -> None:
 
 def test_path_traversal_rejected(tmp_path: Path) -> None:
     with pytest.raises(ResilientWriteError) as exc:
-        safe_write(tmp_path, path="../escape.txt", content="x")
+        safe_write([tmp_path], path="../escape.txt", content="x")
     assert exc.value.error == "policy_violation"
 
 
 def test_absolute_path_rejected(tmp_path: Path) -> None:
     with pytest.raises(ResilientWriteError) as exc:
-        safe_write(tmp_path, path="/etc/passwd", content="x")
+        safe_write([tmp_path], path="/etc/passwd", content="x")
     assert exc.value.error == "policy_violation"
 
 
 def test_nested_directories_created(tmp_path: Path) -> None:
-    safe_write(tmp_path, path="a/b/c/deep.txt", content="ok\n")
+    safe_write([tmp_path], path="a/b/c/deep.txt", content="ok\n")
     assert (tmp_path / "a/b/c/deep.txt").read_text() == "ok\n"
 
 
 def test_no_temp_files_left_on_success(tmp_path: Path) -> None:
-    safe_write(tmp_path, path="a.txt", content="x\n")
+    safe_write([tmp_path], path="a.txt", content="x\n")
     leftovers = list(tmp_path.glob("**/*.tmp.*"))
     assert leftovers == []
 
@@ -112,14 +112,14 @@ def test_no_temp_files_left_on_success(tmp_path: Path) -> None:
 def test_no_temp_files_left_on_rejected_create(tmp_path: Path) -> None:
     (tmp_path / "a.txt").write_text("old")
     with pytest.raises(ResilientWriteError):
-        safe_write(tmp_path, path="a.txt", content="new")
+        safe_write([tmp_path], path="a.txt", content="new")
     leftovers = list(tmp_path.glob("**/*.tmp.*"))
     assert leftovers == []
 
 
 def test_journal_is_jsonlines(tmp_path: Path) -> None:
-    safe_write(tmp_path, path="a.txt", content="x\n")
-    safe_write(tmp_path, path="b.txt", content="y\n")
+    safe_write([tmp_path], path="a.txt", content="x\n")
+    safe_write([tmp_path], path="b.txt", content="y\n")
     raw = (tmp_path / ".resilient_write" / "journal.jsonl").read_text()
     lines = [ln for ln in raw.splitlines() if ln.strip()]
     assert len(lines) == 2

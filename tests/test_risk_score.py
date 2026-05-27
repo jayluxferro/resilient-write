@@ -181,7 +181,7 @@ def test_safe_write_classify_rejects_high_risk(tmp_path: Path) -> None:
     )
     with pytest.raises(ResilientWriteError) as exc:
         safe_write(
-            tmp_path,
+            [tmp_path],
             path="appendix.tex",
             content=draft,
             classify=True,
@@ -195,7 +195,7 @@ def test_safe_write_classify_rejects_high_risk(tmp_path: Path) -> None:
 
 def test_safe_write_classify_allows_safe_content(tmp_path: Path) -> None:
     result = safe_write(
-        tmp_path,
+        [tmp_path],
         path="notes.md",
         content="# a harmless document\n\nprose only\n",
         classify=True,
@@ -207,7 +207,7 @@ def test_safe_write_classify_threshold_low(tmp_path: Path) -> None:
     # A single PII hit scores 0.15 → `low`. With reject_at=low it blocks.
     with pytest.raises(ResilientWriteError) as exc:
         safe_write(
-            tmp_path,
+            [tmp_path],
             path="notes.md",
             content=f"contact: {SYN_EMAIL}\n",
             classify=True,

@@ -52,7 +52,7 @@ def _tmp_path(target: Path) -> Path:
 
 
 def safe_write(
-    workspace: Path,
+    workspaces: list[Path],
     *,
     path: str,
     content: str | None = None,
@@ -62,20 +62,21 @@ def safe_write(
     caller: str | None = None,
     classify: bool = False,
     classify_reject_at: str = _DEFAULT_CLASSIFY_REJECT_AT,
+    state_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Transactionally write to `path` under `workspace`.
+    """Transactionally write to `path` under the first workspace.
 
     Accepts either `content` (a UTF-8 string) or `content_bytes` (raw
-    bytes). Exactly one must be provided. The bytes form exists for L4
-    scratchpad callers that store non-text material and don't want to
-    round-trip through base64 inside `safe_write` itself.
+    bytes). Exactly one must be provided.
 
     When `classify=True`, the L0 classifier runs first over the string
-    form of the content. Classify requires `content`; calling with
-    `content_bytes` and `classify=True` raises a `policy_violation`
-    (the caller should decode to a string themselves if they want to
-    classify binary material).
+    form of the content.
+
+    ``state_root`` (optional) is where ``.resilient_write/`` lives —
+    used for policy loading and journal. Defaults to the first workspace.
     """
+    _state = state_root if state_root is not None else workspaces[0]
+
     if (content is None) == (content_bytes is None):
         raise ResilientWriteError(
             "policy_violation",
@@ -101,7 +102,7 @@ def safe_write(
                     "reason": "classify_requires_content_str_not_bytes"
                 },
             )
-        policy = load_policy(workspace)
+        policy = load_policy(_state)
         report = score_content(
             content, policy=policy, target_path=path
         )
@@ -126,7 +127,7 @@ def safe_write(
                 },
             )
 
-    target = resolve_in_workspace(workspace, path)
+    target = resolve_in_workspace(workspaces, path)
     parent = target.parent
     try:
         parent.mkdir(parents=True, exist_ok=True)
@@ -138,10 +139,8 @@ def safe_write(
         ) from exc
 
     if content_bytes is None:
-        # `content` is guaranteed non-None by the earlier guard.
         content_bytes = content.encode("utf-8")  # type: ignore[union-attr]
 
-    # Mode preconditions.
     target_exists = target.exists()
     if mode == "create" and target_exists:
         raise ResilientWriteError(
@@ -155,7 +154,6 @@ def safe_write(
             },
         )
 
-    # Optional optimistic-concurrency guard.
     if expected_prev_sha256 is not None:
         current = _file_sha256(target) if target_exists else ""
         if current != expected_prev_sha256:
@@ -170,7 +168,6 @@ def safe_write(
                 },
             )
 
-    # Determine the final bytes on disk after the write.
     if mode == "append" and target_exists:
         existing = target.read_bytes()
         final_bytes = existing + content_bytes
@@ -181,7 +178,6 @@ def safe_write(
     tmp = _tmp_path(target)
 
     try:
-        # O_CREAT | O_EXCL — refuse to clobber a stray tmp file.
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
         try:
             with os.fdopen(fd, "wb") as f:
@@ -189,11 +185,8 @@ def safe_write(
                 f.flush()
                 os.fsync(f.fileno())
         except Exception:
-            # fdopen took ownership; if the with-block re-raised, the
-            # fd is already closed. Nothing further to do here.
             raise
 
-        # Read-back verification.
         actual_hash = _file_sha256(tmp)
         if actual_hash != expected_hash:
             raise ResilientWriteError(
@@ -213,11 +206,10 @@ def safe_write(
         raise
     except OSError as exc:
         _unlink_quiet(tmp)
-        # Classify the OS error to a reason_hint.
-        if exc.errno in (13, 1):  # EACCES, EPERM
+        if exc.errno in (13, 1):
             reason = "permission"
             err_kind: str = "policy_violation"
-        elif exc.errno in (28,):  # ENOSPC
+        elif exc.errno in (28,):
             reason = "size_limit"
             err_kind = "quota_exceeded"
         else:
@@ -229,10 +221,9 @@ def safe_write(
             context={"path": path, "errno": exc.errno, "strerror": exc.strerror},
         ) from exc
 
-    # Journal the success.
-    rel = relative_to_workspace(workspace, target)
+    rel = relative_to_workspace(workspaces, target)
     entry = journal.append(
-        workspace,
+        _state,
         path=rel,
         sha256=expected_hash,
         bytes_written=len(final_bytes),

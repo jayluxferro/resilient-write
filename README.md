@@ -100,6 +100,37 @@ Exposes a single endpoint:
 
 Sessions are tracked server-side. Reconnecting clients resume their session via the `Mcp-Session-Id` response header.
 
+## State root vs workspace roots
+
+Two independent concepts, both defaulting to `$PWD`:
+
+| Env var | Purpose | Default |
+|---|---|---|
+| `RW_STATE_DIR` | Where `.resilient_write/` state lives (journal, chunks, checkpoints, scratchpad) | first `$RW_WORKSPACE` → `$PWD` |
+| `RW_WORKSPACE` | Access boundary for user-supplied write paths | `$PWD` |
+
+`RW_WORKSPACE` accepts two formats:
+
+- **Plain string** (backward compatible): `"/Users/jay/my-project"`
+- **JSON array** (multi-workspace): `["/Users/jay/proj-a", "/Volumes/Lux/dev/proj-b"]`
+
+When multiple workspaces are configured:
+- **Writes** always target the *first* workspace (the write boundary).
+- **Reads** (handoff, drift checks) search all workspaces in order — first match wins.
+- State (`.resilient_write/`) lives under `RW_STATE_DIR`, which falls back to the first workspace.
+
+### CLI
+
+```bash
+# Single workspace
+resilient-write -w /Users/jay/proj-a
+
+# Multiple workspaces (repeatable)
+resilient-write -w /Users/jay/proj-a -w /Volumes/Lux/dev/proj-b
+```
+
+CLI args prepend to `$RW_WORKSPACE`.
+
 ## MCP client configuration
 
 ### stdio (Claude Code, Cursor, Codex)
@@ -111,12 +142,17 @@ Sessions are tracked server-side. Reconnecting clients resume their session via 
       "command": "uvx",
       "args": ["resilient-write"],
       "env": {
-        "RW_WORKSPACE": "/path/to/your/project"
+        "RW_STATE_DIR": "/path/to/your/project",
+        "RW_WORKSPACE": "[\"/Users/jay/proj-a\", \"/Volumes/Lux/dev/proj-b\"]"
       }
     }
   }
 }
 ```
+
+`RW_STATE_DIR` is optional — it falls back to `RW_WORKSPACE`, which falls back
+to `$PWD`. Set only `RW_WORKSPACE` if you want state colocated with the
+workspace (the common case). Set both when you need distinct locations.
 
 ### SSE
 
