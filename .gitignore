@@ -34,3 +34,7 @@ paper/
 
 # misc
 git-push
+bench/__pycache__/
+results/
+email-to-devbench.md
+devbench/
