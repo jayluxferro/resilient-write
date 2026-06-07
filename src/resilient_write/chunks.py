@@ -121,7 +121,8 @@ def chunk_write(
     sdir.mkdir(parents=True, exist_ok=True)
     part_name = PART_TEMPLATE.format(index=index)
     rel = _session_rel(session, part_name)
-    result = sw.safe_write([state_root], path=rel, content=content, mode="overwrite", caller=caller)
+    target_abs = (state_root / rel).resolve()
+    result = sw.safe_write([state_root], path=str(target_abs), content=content, mode="overwrite", caller=caller)
     existing = _read_manifest(state_root, session) or {}
     manifest: dict[str, Any] = {
         "session": session,
@@ -190,9 +191,17 @@ def chunk_compose(
             "write_corruption", "encoding",
             context={"session": session, "reason": f"composed_not_utf8: {exc}"},
         ) from exc
-    target_abs = (_ws_list[0] / output_path).resolve()
+    if workspaces is None:
+        # State-internal compose (e.g. checkpoint): anchor at state_root.
+        target_abs = (state_root / output_path).resolve()
+        write_path = str(target_abs)
+    else:
+        # User-facing compose: anchor at CWD (safe_write handles it).
+        op = Path(output_path)
+        target_abs = op.resolve() if op.is_absolute() else (Path.cwd() / output_path).resolve()
+        write_path = output_path
     mode: sw.WriteMode = "overwrite" if target_abs.exists() else "create"
-    result = sw.safe_write(_ws_list, path=output_path, content=composed_text,
+    result = sw.safe_write(_ws_list, path=write_path, content=composed_text,
                            mode=mode, caller=caller, state_root=state_root)
     if cleanup:
         shutil.rmtree(sdir, ignore_errors=True)

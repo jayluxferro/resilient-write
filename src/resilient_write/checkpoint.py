@@ -116,7 +116,8 @@ def checkpoint_save(
         result = _write_chunked(state_root, name, content, caller=caller)
     else:
         mode: sw.WriteMode = "overwrite" if target.exists() else "create"
-        result = sw.safe_write([state_root], path=rel, content=content, mode=mode, caller=caller)
+        target_abs = (state_root / rel).resolve()
+        result = sw.safe_write([state_root], path=str(target_abs), content=content, mode=mode, caller=caller)
     return {
         "ok": True, "name": name, "format": fmt, "ttl": ttl,
         "checkpoint_path": result["path"], "sha256": result["sha256"],

@@ -16,7 +16,7 @@ from typing import Any, Iterable
 from . import safe_write as sw
 from .errors import ResilientWriteError
 from .journal import utc_now_iso
-from .paths import ensure_state_dir, resolve_in_workspace
+from .paths import ensure_state_dir
 
 SCRATCH_DIRNAME = "scratch"
 INDEX_FILENAME = "index.jsonl"
@@ -129,11 +129,11 @@ def scratch_put(
     payload = _decode_input(content, encoding)
     sha256 = hashlib.sha256(payload).hexdigest()
     rel = _scratch_rel(sha256)
-    target = resolve_in_workspace([state_root], rel)
+    target = (state_root / rel).resolve()
     deduped = target.exists()
     journal_id: str | None = None
     if not deduped:
-        result = sw.safe_write([state_root], path=rel, content_bytes=payload, mode="create", caller=caller)
+        result = sw.safe_write([state_root], path=str(target), content_bytes=payload, mode="create", caller=caller)
         journal_id = result["journal_id"]
     entry: dict[str, Any] = {"sha256": sha256, "label": label, "content_type": content_type,
                               "bytes": len(payload), "encoding": encoding, "notes": notes, "created_at": utc_now_iso()}
@@ -158,7 +158,7 @@ def scratch_ref(state_root: Path, *, sha256: str | None = None, label: str | Non
         raise ResilientWriteError("stale_precondition", "unknown",
                                    context={"sha256": sha256, "label": label, "reason": "not_found"})
     entry = matches[-1]
-    target = resolve_in_workspace([state_root], _scratch_rel(entry["sha256"]))
+    target = (state_root / _scratch_rel(entry["sha256"])).resolve()
     return {"ok": True, "entry": entry, "scratch_path": _scratch_rel(entry["sha256"]),
             "bin_exists": target.exists(), "alias_count": len(matches)}
 
@@ -173,7 +173,7 @@ def scratch_get(state_root: Path, *, sha256: str, encoding: str = "utf-8") -> di
                                    context={"encoding": encoding, "valid": list(_VALID_ENCODINGS),
                                             "reason": "unsupported_encoding"})
     rel = _scratch_rel(sha256)
-    target = resolve_in_workspace([state_root], rel)
+    target = (state_root / rel).resolve()
     if not target.exists():
         raise ResilientWriteError("stale_precondition", "unknown",
                                    context={"sha256": sha256, "reason": "not_found"})

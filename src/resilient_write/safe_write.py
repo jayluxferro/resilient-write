@@ -234,6 +234,7 @@ def safe_write(
     return {
         "ok": True,
         "path": rel,
+        "abs_path": str(target.resolve()),
         "sha256": expected_hash,
         "bytes": len(final_bytes),
         "mode_applied": mode,

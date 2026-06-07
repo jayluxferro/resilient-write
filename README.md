@@ -100,24 +100,29 @@ Exposes a single endpoint:
 
 Sessions are tracked server-side. Reconnecting clients resume their session via the `Mcp-Session-Id` response header.
 
-## State root vs workspace roots
+## Path resolution: CWD, workspaces, state
 
-Two independent concepts, both defaulting to `$PWD`:
+Three independent concepts:
 
-| Env var | Purpose | Default |
+| Env var / source | Purpose | Default |
 |---|---|---|
-| `RW_STATE_DIR` | Where `.resilient_write/` state lives (journal, chunks, checkpoints, scratchpad) | first `$RW_WORKSPACE` → `$PWD` |
-| `RW_WORKSPACE` | Access boundary for user-supplied write paths | `$PWD` |
+| **CWD** (process working directory) | The default anchor for relative paths supplied by the agent | inherited from the launcher |
+| `RW_WORKSPACE` | The *access boundary* — paths must resolve inside one of these roots | CWD |
+| `RW_STATE_DIR` | Where `.resilient_write/` state lives (journal, chunks, checkpoints, scratchpad) | CWD |
 
-`RW_WORKSPACE` accepts two formats:
+### Resolution rules
 
-- **Plain string** (backward compatible): `"/Users/jay/my-project"`
-- **JSON array** (multi-workspace): `["/Users/jay/proj-a", "/Volumes/Lux/dev/proj-b"]`
+- **Relative paths** anchor at **CWD** (not at `workspaces[0]`). `safe_write(path="src/foo.py")` writes to `<CWD>/src/foo.py`.
+- **Absolute paths** are accepted only if they fall inside *some* workspace root. This is the escape hatch for cross-workspace writes.
+- The **workspace boundary** is checked against the full set of roots — target must be inside *any* one of them.
+- **CWD is auto-added** to the workspace list if it isn't already inside one of the configured roots, so a plain relative path is always within the access boundary.
+- **State is decoupled** from workspaces. Set `RW_STATE_DIR` to put state somewhere specific; otherwise it lives in CWD.
 
-When multiple workspaces are configured:
-- **Writes** always target the *first* workspace (the write boundary).
-- **Reads** (handoff, drift checks) search all workspaces in order — first match wins.
-- State (`.resilient_write/`) lives under `RW_STATE_DIR`, which falls back to the first workspace.
+`RW_WORKSPACE` accepts:
+
+- **Plain string**: `"/Users/jay/my-project"`
+- **`os.pathsep` list**: `"/Users/jay/a:/Volumes/Lux/dev/b"`
+- **JSON array**: `["/Users/jay/a", "/Volumes/Lux/dev/b"]`
 
 ### CLI
 
@@ -142,7 +147,6 @@ CLI args prepend to `$RW_WORKSPACE`.
       "command": "uvx",
       "args": ["resilient-write"],
       "env": {
-        "RW_STATE_DIR": "/path/to/your/project",
         "RW_WORKSPACE": "[\"/Users/jay/proj-a\", \"/Volumes/Lux/dev/proj-b\"]"
       }
     }
@@ -150,9 +154,28 @@ CLI args prepend to `$RW_WORKSPACE`.
 }
 ```
 
-`RW_STATE_DIR` is optional — it falls back to `RW_WORKSPACE`, which falls back
-to `$PWD`. Set only `RW_WORKSPACE` if you want state colocated with the
-workspace (the common case). Set both when you need distinct locations.
+### Running from a checkout: use `--project`, not `--directory`
+
+When launching from a local source checkout via `uv run`, use **`--project`**, not `--directory`:
+
+```json
+{
+  "command": "uv",
+  "args": ["run", "--project", "/path/to/resilient-write-src", "resilient-write"],
+  "env": { "RW_WORKSPACE": "[\"/Users/jay\"]" }
+}
+```
+
+`uv run --directory X` **chdir's** to X before running, which pins the server's
+CWD to its own source tree — relative paths from the agent then resolve there
+rather than in the agent's project. `--project X` locates the package without
+changing CWD, so the server inherits the launcher's CWD (your active project).
+For any MCP server that resolves user-supplied relative paths, prefer
+`--project`.
+
+`RW_STATE_DIR` is optional — when unset, state lives in CWD. Set it to a
+fixed location if you want a single journal across all projects, or leave it
+unset for per-project state.
 
 ### SSE
 
