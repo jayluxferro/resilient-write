@@ -49,7 +49,7 @@ def _truncate_to_minute(iso: str) -> str:
 
 
 def analyze_journal(
-    workspace: Path,
+    state_root: Path,
     *,
     since: str | None = None,
     session_filter: str | None = None,
@@ -68,7 +68,7 @@ def analyze_journal(
         this string are included in the ``sessions`` breakdown. All
         other counters still include every entry.
     """
-    jpath = journal_path(workspace)
+    jpath = journal_path(state_root)
 
     since_dt: datetime | None = None
     if since is not None:
