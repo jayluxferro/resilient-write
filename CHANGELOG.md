@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on disk for local agent use; gitignored going forward).
 
 
+## [0.3.0] — 2026-07-17
+
+### Added
+- **`rw.safe_replace`** surgical replacement tool. Replaces one, all, or an exact count of `old_string` occurrences with `new_string` in an existing file through the same atomic temp-file/fsync/hash/rename path as `rw.safe_write`. Supports `expected_prev_sha256`, optional L0 classification on `new_string`, and journals with `mode="replace"` so audit trails distinguish surgical edits from overwrites.
+
+
 ## [0.1.0] — 2026-04-12
 
 First working release. Complete six-layer MCP server with 134 tests.
@@ -123,5 +129,7 @@ First working release. Complete six-layer MCP server with 134 tests.
   job.
 - No network transport. This is a local stdio MCP process.
 
-[Unreleased]: https://github.com/jayluxferro/resilient-write/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jayluxferro/resilient-write/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/jayluxferro/resilient-write/releases/tag/v0.3.0
+[0.2.0]: https://github.com/jayluxferro/resilient-write/releases/tag/v0.2.0
 [0.1.0]: https://github.com/jayluxferro/resilient-write/releases/tag/v0.1.0

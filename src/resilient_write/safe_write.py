@@ -51,6 +51,108 @@ def _tmp_path(target: Path) -> Path:
     return target.with_name(f"{target.name}.tmp.{secrets.token_hex(6)}")
 
 
+def _unlink_quiet(p: Path) -> None:
+    try:
+        p.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+def _classify_guard(
+    content: str,
+    *,
+    path: str,
+    state_root: Path,
+    classify_reject_at: str,
+) -> None:
+    """Run the L0 classifier over `content` and raise if it hits the threshold."""
+    policy = load_policy(state_root)
+    report = score_content(content, policy=policy, target_path=path)
+    threshold = _VERDICT_RANK.get(classify_reject_at, 3)
+    if _VERDICT_RANK[report["verdict"]] >= threshold:
+        hit_families = sorted(
+            {p["kind"] for p in report["detected_patterns"]}
+        )
+        raise ResilientWriteError(
+            "blocked",
+            "content_filter",
+            suggested_action="redact",
+            detected_patterns=hit_families,
+            retry_budget=policy.retry_budget,
+            context={
+                "path": path,
+                "score": report["score"],
+                "verdict": report["verdict"],
+                "classify_reject_at": classify_reject_at,
+                "detected": report["detected_patterns"],
+                "suggested_actions": report["suggested_actions"],
+            },
+        )
+
+
+def _atomic_write_bytes(
+    target: Path,
+    final_bytes: bytes,
+    *,
+    path_for_error: str,
+) -> tuple[str, Path]:
+    """Write `final_bytes` to `target` atomically (temp → fsync → hash → rename).
+
+    Returns the SHA-256 hex digest and the resolved absolute path of the
+    target. Cleans up the temp file on any failure path.
+    """
+    expected_hash = _sha256(final_bytes)
+    tmp = _tmp_path(target)
+
+    try:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(final_bytes)
+                f.flush()
+                os.fsync(f.fileno())
+        except Exception:
+            raise
+
+        actual_hash = _file_sha256(tmp)
+        if actual_hash != expected_hash:
+            raise ResilientWriteError(
+                "write_corruption",
+                "unknown",
+                context={
+                    "path": path_for_error,
+                    "expected_sha256": expected_hash,
+                    "actual_sha256": actual_hash,
+                    "bytes": len(final_bytes),
+                },
+            )
+
+        os.replace(str(tmp), str(target))
+    except ResilientWriteError:
+        _unlink_quiet(tmp)
+        raise
+    except OSError as exc:
+        _unlink_quiet(tmp)
+        if exc.errno in (13, 1):
+            reason = "permission"
+            err_kind: str = "policy_violation"
+        elif exc.errno in (28,):
+            reason = "size_limit"
+            err_kind = "quota_exceeded"
+        else:
+            reason = "unknown"
+            err_kind = "policy_violation"
+        raise ResilientWriteError(
+            err_kind,  # type: ignore[arg-type]
+            reason,  # type: ignore[arg-type]
+            context={"path": path_for_error, "errno": exc.errno, "strerror": exc.strerror},
+        ) from exc
+
+    return expected_hash, target.resolve()
+
+
 def safe_write(
     workspaces: list[Path],
     *,
@@ -102,30 +204,10 @@ def safe_write(
                     "reason": "classify_requires_content_str_not_bytes"
                 },
             )
-        policy = load_policy(_state)
-        report = score_content(
-            content, policy=policy, target_path=path
+        _classify_guard(
+            content, path=path, state_root=_state,
+            classify_reject_at=classify_reject_at,
         )
-        threshold = _VERDICT_RANK.get(classify_reject_at, 3)
-        if _VERDICT_RANK[report["verdict"]] >= threshold:
-            hit_families = sorted(
-                {p["kind"] for p in report["detected_patterns"]}
-            )
-            raise ResilientWriteError(
-                "blocked",
-                "content_filter",
-                suggested_action="redact",
-                detected_patterns=hit_families,
-                retry_budget=policy.retry_budget,
-                context={
-                    "path": path,
-                    "score": report["score"],
-                    "verdict": report["verdict"],
-                    "classify_reject_at": classify_reject_at,
-                    "detected": report["detected_patterns"],
-                    "suggested_actions": report["suggested_actions"],
-                },
-            )
 
     target = resolve_in_workspace(workspaces, path)
     parent = target.parent
@@ -174,52 +256,9 @@ def safe_write(
     else:
         final_bytes = content_bytes
 
-    expected_hash = _sha256(final_bytes)
-    tmp = _tmp_path(target)
-
-    try:
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-        try:
-            with os.fdopen(fd, "wb") as f:
-                f.write(final_bytes)
-                f.flush()
-                os.fsync(f.fileno())
-        except Exception:
-            raise
-
-        actual_hash = _file_sha256(tmp)
-        if actual_hash != expected_hash:
-            raise ResilientWriteError(
-                "write_corruption",
-                "unknown",
-                context={
-                    "path": path,
-                    "expected_sha256": expected_hash,
-                    "actual_sha256": actual_hash,
-                    "bytes": len(final_bytes),
-                },
-            )
-
-        os.replace(str(tmp), str(target))
-    except ResilientWriteError:
-        _unlink_quiet(tmp)
-        raise
-    except OSError as exc:
-        _unlink_quiet(tmp)
-        if exc.errno in (13, 1):
-            reason = "permission"
-            err_kind: str = "policy_violation"
-        elif exc.errno in (28,):
-            reason = "size_limit"
-            err_kind = "quota_exceeded"
-        else:
-            reason = "unknown"
-            err_kind = "policy_violation"
-        raise ResilientWriteError(
-            err_kind,  # type: ignore[arg-type]
-            reason,  # type: ignore[arg-type]
-            context={"path": path, "errno": exc.errno, "strerror": exc.strerror},
-        ) from exc
+    expected_hash, abs_path = _atomic_write_bytes(
+        target, final_bytes, path_for_error=path
+    )
 
     rel = relative_to_workspace(workspaces, target)
     entry = journal.append(
@@ -234,19 +273,10 @@ def safe_write(
     return {
         "ok": True,
         "path": rel,
-        "abs_path": str(target.resolve()),
+        "abs_path": str(abs_path),
         "sha256": expected_hash,
         "bytes": len(final_bytes),
         "mode_applied": mode,
         "journal_id": entry["journal_id"],
         "wrote_at": entry["ts"],
     }
-
-
-def _unlink_quiet(p: Path) -> None:
-    try:
-        p.unlink()
-    except FileNotFoundError:
-        pass
-    except OSError:
-        pass
