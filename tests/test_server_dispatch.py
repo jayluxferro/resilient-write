@@ -23,6 +23,46 @@ def test_dispatch_safe_write_success(tmp_path: Path, monkeypatch) -> None:
     assert (tmp_path / "a.txt").read_text() == "hi\n"
 
 
+def test_dispatch_safe_replace_success(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("RW_WORKSPACE", str(tmp_path))
+    server._envelope_or_error(
+        "rw.safe_write", {"path": "report.txt", "content": "old value\n"}
+    )
+    out = server._envelope_or_error(
+        "rw.safe_replace",
+        {
+            "path": "report.txt",
+            "old_string": "old value",
+            "new_string": "new value",
+        },
+    )
+    assert out["ok"] is True
+    assert out["path"] == "report.txt"
+    assert out["mode_applied"] == "replace"
+    assert out["replacements"] == 1
+    assert (tmp_path / "report.txt").read_text() == "new value\n"
+
+
+def test_dispatch_safe_replace_returns_typed_envelope_on_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("RW_WORKSPACE", str(tmp_path))
+    server._envelope_or_error(
+        "rw.safe_write", {"path": "report.txt", "content": "old value\n"}
+    )
+    out = server._envelope_or_error(
+        "rw.safe_replace",
+        {
+            "path": "report.txt",
+            "old_string": "missing",
+            "new_string": "new value",
+        },
+    )
+    assert out["ok"] is False
+    assert out["error"] == "stale_precondition"
+    assert out["context"]["tool"] == "rw.safe_replace"
+
+
 def test_dispatch_returns_typed_envelope_on_failure(
     tmp_path: Path, monkeypatch
 ) -> None:

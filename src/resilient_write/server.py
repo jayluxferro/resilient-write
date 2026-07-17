@@ -14,7 +14,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from . import analytics, checkpoint, chunks, handoff, journal, risk_score, safe_write, scratchpad, validate
+from . import analytics, checkpoint, chunks, handoff, journal, risk_score, safe_replace, safe_write, scratchpad, validate
 from .errors import ResilientWriteError
 from .paths import state_root, workspace_roots
 
@@ -25,6 +25,19 @@ _SAFE_WRITE_SCHEMA: dict[str, Any] = {
     "properties": {
         "path": {"type": "string"}, "content": {"type": "string"},
         "mode": {"type": "string", "enum": ["create", "overwrite", "append"], "default": "create"},
+        "expected_prev_sha256": {"type": "string"},
+        "classify": {"type": "boolean", "default": False},
+        "classify_reject_at": {"type": "string", "enum": ["low", "medium", "high"], "default": "high"},
+    }, "additionalProperties": False,
+}
+
+_SAFE_REPLACE_SCHEMA: dict[str, Any] = {
+    "type": "object", "required": ["path", "old_string", "new_string"],
+    "properties": {
+        "path": {"type": "string"},
+        "old_string": {"type": "string"},
+        "new_string": {"type": "string"},
+        "count": {"type": "integer", "default": 1},
         "expected_prev_sha256": {"type": "string"},
         "classify": {"type": "boolean", "default": False},
         "classify_reject_at": {"type": "string", "enum": ["low", "medium", "high"], "default": "high"},
@@ -129,7 +142,7 @@ _JOURNAL_TAIL_SCHEMA: dict[str, Any] = {
     "properties": {
         "n": {"type": "integer", "minimum": 1, "default": 20},
         "filter_path": {"type": "string"},
-        "filter_mode": {"type": "string", "enum": ["create", "overwrite", "append"]},
+        "filter_mode": {"type": "string", "enum": ["create", "overwrite", "append", "replace"]},
     }, "additionalProperties": False,
 }
 
@@ -177,6 +190,7 @@ _CHECKPOINT_CLEANUP_SCHEMA: dict[str, Any] = {
 _TOOL_DEFINITIONS: list[Tool] = [
     Tool(name="rw.risk_score", description="Use before any file write to check for content that may trigger safety filters. Runs deterministic regex + size heuristics and returns a verdict (safe/low/medium/high) with detected patterns and suggested actions. No LLM, no network, <50ms.", inputSchema=_RISK_SCORE_SCHEMA),
     Tool(name="rw.safe_write", description="Use instead of raw Write/edit_file for all file creation and overwrites. Writes atomically (temp file → fsync → SHA-256 verify → rename), appends to an audit journal, and returns structured error envelopes on failure so you can branch on the reason rather than retrying blindly.", inputSchema=_SAFE_WRITE_SCHEMA),
+    Tool(name="rw.safe_replace", description="Use instead of edit_file for surgical replacements in existing files. Replaces one, all, or an exact count of occurrences of old_string with new_string, writes atomically via the same temp/fsync/hash/rename path as safe_write, supports expected_prev_sha256 optimistic concurrency, and journals with mode=replace so the audit trail distinguishes surgical edits from full overwrites.", inputSchema=_SAFE_REPLACE_SCHEMA),
     Tool(name="rw.chunk_write", description="Use for large files: write one numbered chunk to a session directory via safe_write. Retrying a chunk is idempotent. Each chunk gets its own journal row. Compose all chunks into the final file with rw.chunk_compose.", inputSchema=_CHUNK_WRITE_SCHEMA),
     Tool(name="rw.chunk_append", description="Use for building files section by section — auto-detects the highest chunk index and writes index+1. No need to track numbers. If a crash occurs between calls, only the current section is lost; prior chunks are already on disk.", inputSchema=_CHUNK_APPEND_SCHEMA),
     Tool(name="rw.chunk_compose", description="Use after all chunks are written to assemble the final file. Concatenates part-001..N in order, verifies contiguity and total_expected, then writes through safe_write. Optional cleanup wipes the session directory.", inputSchema=_CHUNK_COMPOSE_SCHEMA),
@@ -212,6 +226,17 @@ def _dispatch(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return safe_write.safe_write(
             ws, path=arguments["path"], content=arguments["content"],
             mode=arguments.get("mode", "create"),
+            expected_prev_sha256=arguments.get("expected_prev_sha256"),
+            classify=bool(arguments.get("classify", False)),
+            classify_reject_at=arguments.get("classify_reject_at", "high"),
+            caller=SERVER_NAME, state_root=sr,
+        )
+    if name == "rw.safe_replace":
+        return safe_replace.safe_replace(
+            ws, path=arguments["path"],
+            old_string=arguments["old_string"],
+            new_string=arguments["new_string"],
+            count=int(arguments.get("count", 1)),
             expected_prev_sha256=arguments.get("expected_prev_sha256"),
             classify=bool(arguments.get("classify", False)),
             classify_reject_at=arguments.get("classify_reject_at", "high"),

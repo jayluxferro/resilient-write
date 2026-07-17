@@ -69,6 +69,46 @@ responses are tool-specific. Inputs and outputs are JSON objects.
 
 ---
 
+## `rw.safe_replace`
+
+**Purpose:** L1 surgical find-and-replace for existing files. Use this instead of `edit_file` when only a scoped substring needs to change — it avoids the corruption risk of a full-file rewrite for small edits in large files.
+
+**Input:**
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `path` | string | yes | Existing file path (workspace-relative) |
+| `old_string` | string | yes | Exact substring to replace |
+| `new_string` | string | yes | Replacement text |
+| `count` | integer | no | `1` (default, exact-one match), `-1` (all matches), or exact positive count |
+| `expected_prev_sha256` | string | no | Optimistic-concurrency guard |
+| `classify` | boolean | no | Run the L0 classifier on `new_string` first. Default `false`. |
+| `classify_reject_at` | enum | no | Minimum verdict that triggers rejection: `low`, `medium`, `high` (default). |
+
+**Success output:**
+```json
+{
+  "ok": true,
+  "path": "report.tex",
+  "sha256": "4b0c...",
+  "bytes": 50312,
+  "mode_applied": "replace",
+  "replacements": 1,
+  "journal_id": "wj_01HF2Z...",
+  "wrote_at": "2026-04-11T17:28:04Z"
+}
+```
+
+**Failure output:** typed-error envelope (L3). Common reasons:
+- `stale_precondition` / `file_not_found` — target does not exist.
+- `stale_precondition` / `old_string_not_found` — `old_string` is absent.
+- `stale_precondition` / `ambiguous_match` — more matches than `count` allows.
+- `stale_precondition` / `insufficient_matches` — fewer matches than `count` requires.
+- `stale_precondition` — `expected_prev_sha256` mismatch.
+- `blocked` / `content_filter` — `new_string` tripped the L0 classifier.
+- `policy_violation` / `encoding` — empty `old_string`, non-UTF-8 file, or `count == 0`.
+
+---
+
 ## `rw.chunk_write`
 
 **Purpose:** L2 — write one chunk of a larger compose session.
@@ -310,7 +350,7 @@ The `preview: true` field distinguishes this from a real compose result.
 |---|---|---|---|
 | `n` | integer | no | Number of entries to return (default `20`, minimum `1`) |
 | `filter_path` | string | no | Only return entries whose `path` matches this value |
-| `filter_mode` | enum | no | Only return entries whose `mode` is `create`, `overwrite`, or `append` |
+| `filter_mode` | enum | no | Only return entries whose `mode` is `create`, `overwrite`, `append`, or `replace` |
 
 **Output:**
 ```json
