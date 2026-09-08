@@ -14,12 +14,20 @@ Two independent concerns:
 Relative paths anchor at the CWD by default. Absolute paths are accepted
 if they fall inside any workspace root. Boundary checks succeed when the
 resolved target is contained in *any* workspace root.
+
+The unsafe-root blocklist (``_UNSAFE_ROOTS``) refuses ``/`` and OS-critical
+directories — in both their raw and ``Path.resolve()``-canonicalized forms
+(``/etc``, ``/var`` and ``/tmp`` are symlinks into ``/private/...`` on
+macOS). Setting ``$RW_ALLOW_UNSAFE_ROOTS`` to a truthy value turns the
+refusal into a one-time stderr warning — the boundary stays explicit for
+anyone who has not opted in.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path, PurePosixPath
 
 from .errors import ResilientWriteError
@@ -27,6 +35,46 @@ from .errors import ResilientWriteError
 STATE_DIRNAME = ".resilient_write"
 
 _UNSAFE_ROOTS = frozenset({"/", "/bin", "/sbin", "/usr", "/etc", "/var", "/tmp"})
+
+# On macOS /etc, /var and /tmp are symlinks into /private/..., so after
+# Path.resolve() canonicalization the raw strings above would never match.
+# Check both forms so the blocklist means what it says on every platform.
+_UNSAFE_ROOTS_RESOLVED = _UNSAFE_ROOTS | frozenset(
+    str(Path(raw).resolve()) for raw in _UNSAFE_ROOTS
+)
+
+# Escape hatch: a truthy $RW_ALLOW_UNSAFE_ROOTS turns the refusal below into
+# a one-time warning per (env_var, root). Deliberately loud, never silent —
+# the guard keeps protecting anyone who has not opted in.
+ALLOW_UNSAFE_VAR = "RW_ALLOW_UNSAFE_ROOTS"
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+_warned_unsafe: set[tuple[str, str]] = set()
+
+
+def _env_flag(name: str) -> bool:
+    """True when the env var holds a truthy value ("1", "true", "yes", "on")."""
+    return os.environ.get(name, "").strip().lower() in _TRUTHY
+
+
+def _warn_unsafe_bypass(env_var: str, root: Path) -> None:
+    """Warn once per (env_var, root) that the unsafe-root guard is bypassed.
+
+    ``_guard_unsafe`` runs on every tool call, so the warning must fire once
+    per process — not once per call — to avoid stderr spam.
+    """
+    key = (env_var, str(root))
+    if key in _warned_unsafe:
+        return
+    _warned_unsafe.add(key)
+    print(
+        f"resilient-write: WARNING: {ALLOW_UNSAFE_VAR} is set — bypassing "
+        f"the unsafe-root guard for '{root}' as {env_var}. The workspace "
+        "boundary no longer constrains writes; paths can reach OS-critical "
+        "directories. Only use this if you accept that risk.",
+        file=sys.stderr,
+    )
 
 
 def _parse_root_list(raw: str) -> list[Path]:
@@ -53,15 +101,20 @@ def _parse_root_list(raw: str) -> list[Path]:
 
 
 def _guard_unsafe(roots: list[Path], env_var: str) -> None:
-    for root in roots:
-        if str(root) in _UNSAFE_ROOTS:
-            import sys
-            print(
-                f"resilient-write: refusing to use '{root}' as {env_var}. "
-                "Set the variable to your project directory.",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
+    """Refuse roots in ``_UNSAFE_ROOTS`` unless ``$RW_ALLOW_UNSAFE_ROOTS`` is set."""
+    blocked = [root for root in roots if str(root) in _UNSAFE_ROOTS_RESOLVED]
+    if not blocked:
+        return
+    if _env_flag(ALLOW_UNSAFE_VAR):
+        for root in blocked:
+            _warn_unsafe_bypass(env_var, root)
+        return
+    print(
+        f"resilient-write: refusing to use '{blocked[0]}' as {env_var}. "
+        "Set the variable to your project directory.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 
 
 def _resolve_roots(env_var: str) -> list[Path]:
@@ -88,14 +141,16 @@ def state_root() -> Path:
     if os.environ.get("RW_STATE_DIR"):
         return _resolve_root_single("RW_STATE_DIR")
     root = Path.cwd().resolve()
-    if str(root) in _UNSAFE_ROOTS:
-        import sys
-        print(
-            f"resilient-write: refusing to use '{root}' as state root. "
-            "Set $RW_STATE_DIR to your project directory.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
+    if str(root) in _UNSAFE_ROOTS_RESOLVED:
+        if _env_flag(ALLOW_UNSAFE_VAR):
+            _warn_unsafe_bypass("state root (cwd)", root)
+        else:
+            print(
+                f"resilient-write: refusing to use '{root}' as state root. "
+                "Set $RW_STATE_DIR to your project directory.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
     return root
 
 
